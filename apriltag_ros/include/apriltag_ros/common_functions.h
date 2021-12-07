@@ -210,6 +210,23 @@ class TagDetector
       const Eigen::Quaternion<double> rot_quaternion,
       const std_msgs::Header& header);
 
+  // EDIT: alternative to makeTagPose
+  // computes tag to vehicle pose in NED frame with master tag as NED origin
+  // assumes fixed transformation between centre of vehicle and camera      
+  geometry_msgs::PoseWithCovarianceStamped makeNEDPose(
+      const Eigen::Matrix4d& transform,
+      const Eigen::Quaternion<double> rot_quaternion,
+      const std_msgs::Header& header);
+
+  // EDIT: alternative to makeTagPose
+  // The last transformations must be done in Matlab with this one
+  // Use makeNEDPose instead
+  geometry_msgs::PoseWithCovarianceStamped makeAlmostNEDPose(
+      const Eigen::Matrix4d& transform,
+      const Eigen::Quaternion<double> rot_quaternion,
+      const std_msgs::Header& header);
+
+
   // Detect tags in an image
   AprilTagDetectionArray detectTags(
       const cv_bridge::CvImagePtr& image,

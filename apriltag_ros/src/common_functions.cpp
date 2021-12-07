@@ -42,6 +42,12 @@
 #include "tagCircle21h7.h"
 #include "tagCircle49h12.h"
 
+// tf2 definitions
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+//#include <tf/LinearMath/Matrix3x3.h>
+
+#include <cmath>
+
 namespace apriltag_ros
 {
 
@@ -332,8 +338,12 @@ AprilTagDetectionArray TagDetector::detectTags (
     Eigen::Matrix3d rot = transform.block(0, 0, 3, 3);
     Eigen::Quaternion<double> rot_quaternion(rot);
 
+    // EDIT: express in NED instead
     geometry_msgs::PoseWithCovarianceStamped tag_pose =
-        makeTagPose(transform, rot_quaternion, image->header);
+        makeNEDPose(transform, rot_quaternion, image->header);
+
+    //geometry_msgs::PoseWithCovarianceStamped tag_pose =
+    //    makeTagPose(transform, rot_quaternion, image->header);
 
     // Add the detection to the back of the tag detection array
     AprilTagDetection tag_detection;
@@ -368,8 +378,12 @@ AprilTagDetectionArray TagDetector::detectTags (
       Eigen::Matrix3d rot = transform.block(0, 0, 3, 3);
       Eigen::Quaternion<double> rot_quaternion(rot);
 
+      // EDIT: express in NED instead
       geometry_msgs::PoseWithCovarianceStamped bundle_pose =
-          makeTagPose(transform, rot_quaternion, image->header);
+          makeNEDPose(transform, rot_quaternion, image->header);
+
+      //geometry_msgs::PoseWithCovarianceStamped bundle_pose =
+      //    makeTagPose(transform, rot_quaternion, image->header);
 
       // Add the detection to the back of the tag detection array
       AprilTagDetection tag_detection;
@@ -387,12 +401,52 @@ AprilTagDetectionArray TagDetector::detectTags (
       geometry_msgs::PoseStamped pose;
       pose.pose = tag_detection_array.detections[i].pose.pose.pose;
       pose.header = tag_detection_array.detections[i].pose.header;
+
+
+      /*
+      // %%% EDIT: transform from camera frame to ROS frame 
+      tf2::Quaternion q_orig, q_rot, q_new;
+
+      // get original orientation
+      tf2::convert(pose.pose.orientation , q_orig);
+
+      double r=-1.5707, p=0, y=-1.5707;  
+      q_rot.setRPY(r, p, y);
+
+      q_new = q_rot*q_orig;  // Calculate the new orientation
+      q_new.normalize();
+
+      // Stuff the new rotation back into the pose. This requires conversion into a msg type
+      tf2::convert(q_new, pose.pose.orientation);
+
+      float point_x = pose.pose.position.z;
+      float point_y = pose.pose.position.x;
+      float point_z = pose.pose.position.y;
+
+      pose.pose.position.x = point_x;
+      pose.pose.position.y = point_y;
+      pose.pose.position.z = point_z;
+      */
+
       tf::Stamped<tf::Transform> tag_transform;
       tf::poseStampedMsgToTF(pose, tag_transform);
+
+
+      // EDIT: inverse transform
+      //tf::Transform tag_transform_inverse;
+      //tag_transform_inverse = tag_transform.inverse();
+
+      //tf_pub_.sendTransform(tf::StampedTransform(tag_transform,
+      //                                           tag_transform.stamp_,
+      //                                           image->header.frame_id,
+      //                                           detection_names[i]));
+
+      // %%% EDIT: force tf to map parent frame
       tf_pub_.sendTransform(tf::StampedTransform(tag_transform,
                                                  tag_transform.stamp_,
-                                                 image->header.frame_id,
-                                                 detection_names[i]));
+                                                 "map",
+                                                 detection_names[i]));                                           
+
     }
   }
 
@@ -527,6 +581,171 @@ geometry_msgs::PoseWithCovarianceStamped TagDetector::makeTagPose(
   pose.pose.pose.orientation.w = rot_quaternion.w();
   return pose;
 }
+
+// EDIT: alternative to makeTagPose
+geometry_msgs::PoseWithCovarianceStamped TagDetector::makeNEDPose(
+    const Eigen::Matrix4d& transform,
+    const Eigen::Quaternion<double> rot_quaternion,
+    const std_msgs::Header& header)
+{
+  geometry_msgs::PoseWithCovarianceStamped pose;
+  pose.header = header;
+
+  //===== Position and orientation
+
+
+  // %%% step 1: static transform from camera to center of vehicle in camera frame %%% 
+  
+  // Measured offsets between camera and center of vehicle (in camera frame):
+  // x = 0.06 m, y = 0.3115 m, z = 0.033 m 
+   
+  pose.pose.pose.position.x    = transform(0, 3) - 0.06;
+  pose.pose.pose.position.y    = transform(1, 3) - 0.3115;
+  pose.pose.pose.position.z    = transform(2, 3) - 0.033;
+
+  // We assume no rotation since camera and vehicle both points forward in body frame
+  pose.pose.pose.orientation.x = rot_quaternion.x();
+  pose.pose.pose.orientation.y = rot_quaternion.y();
+  pose.pose.pose.orientation.z = rot_quaternion.z();
+  pose.pose.pose.orientation.w = rot_quaternion.w();
+
+
+  // %%% step 2: inverse transform - from center of vehicle to tag frame %%%
+
+  // pose -> tf
+  tf::Stamped<tf::Transform> tag_transform;
+  tf::poseMsgToTF(pose.pose.pose, tag_transform);
+
+  // tf -> tf inverse
+  tf::Transform tag_transform_inverse;
+  tag_transform_inverse = tag_transform.inverse();
+
+  // tf inverse -> pose inverse
+  geometry_msgs::PoseWithCovarianceStamped pose_inverse;
+  pose_inverse.header = header;
+  tf::poseTFToMsg(tag_transform_inverse, pose_inverse.pose.pose);  
+  
+
+  // %%% step 3: rotate from tag frame to NED frame %%%
+
+  tf2::Quaternion q_orig_1, q_rot_1, q_new_1;
+
+  // extract original orientation
+  tf2::convert(pose_inverse.pose.pose.orientation , q_orig_1);
+
+  // set new rotation
+  double r1=M_PI/2, p1=0, y1=M_PI/2; // roll, pitch, yaw - order: about X Y Z respectively
+  q_rot_1.setRPY(r1,p1,y1);
+  
+  // rotate the previous orientation by q_rot and normalize
+  q_new_1 = q_rot_1*q_orig_1;
+  q_new_1.normalize();
+
+  // pose NED
+  geometry_msgs::PoseWithCovarianceStamped pose_NED;
+  pose_NED.header = header;
+
+  // Stuff the new rotation back into the pose 
+  tf2::convert(q_new_1, pose_NED.pose.pose.orientation);
+ 
+  // update the position in the new reference frame
+  pose_NED.pose.pose.position.x = pose_inverse.pose.pose.position.z;
+  pose_NED.pose.pose.position.y = -pose_inverse.pose.pose.position.x;
+  pose_NED.pose.pose.position.z = -pose_inverse.pose.pose.position.y;
+  
+
+  // %%% step 4: Align heading/position with NED frame %%%
+
+  // %%%% The yaw offset between the axis pointing out of the aprilTag and true north consist of two components: 
+  // %%%% 1. A fixed, measured rotation about Z axis (yaw): 227 degrees
+  // %%%% 2. A small rotation about Z axis (yaw) depending on which marker configuration is used (between 1.5 and 2.5 degrees)
+  // %%%% NB! The small rotation in (2) above is found by subtracting for the constant heading offset between ground truth SBG Ellipse INS and Apriltag
+  // %%%% The same small rotation is tested for multiple scenarios to show reproducibility -> E.g., 227 deg + 1.5 deg is closer to the true yaw offset 
+
+  // pose rotated NED (to align apriltag with true north) 
+  geometry_msgs::PoseWithCovarianceStamped pose_NED_rot;
+  pose_NED_rot.header = header;
+
+  float yaw_offset, yaw_offset_1, yaw_offset_2;
+  yaw_offset_1 = 227*(M_PI/180);
+  yaw_offset_2 = 1.5*(M_PI/180); // TODO: update this! step 1: , step 2: , step 3:  
+  yaw_offset = yaw_offset_1 + yaw_offset_2;
+
+
+  // %%% 4.1: find heading relative to true North %%%
+
+  // %%%% NB! Given that we have the tag frame as specified by AprilTags and rotate it by q_rot_1 to get the pose_NED orientation,
+  // %%%% we only need to rotate about z axis to find heading relative to true north.
+  // %%%% Hence, we do the following to find the NED heading angle:
+  // %%%% Subtract the measured Apriltag yaw and 90 degrees from the yaw offset (227 + 1.5/2.5 deg)
+  // %%%% Example: Heading = yaw_offset - 90 deg - apriltag_yaw_offset = (227 + 1.5) - 90 - apriltag_yaw_offset
+
+  // NB! Since we want to subtract the yaw measured by aprilTags, we go in opposite (negative since Z down) yaw direction
+
+
+  // extract orientation
+  tf2::Quaternion q_orig_2;
+  tf2::convert(pose_NED.pose.pose.orientation , q_orig_2);
+
+  // convert quat to rpy
+	double roll, pitch, yaw, yaw_NED;
+  tf2::Matrix3x3(q_orig_2).getRPY(roll, pitch, yaw);
+  
+  // compute yaw angle relative to north
+  yaw_NED = yaw_offset - 90*(M_PI/180) - yaw;
+
+  // we do not touch roll and pitch
+  q_orig_2.setRPY(roll, pitch, yaw_NED);
+
+  // Stuff the final rotation back into the pose 
+  tf2::convert(q_orig_2, pose_NED_rot.pose.pose.orientation);
+
+
+  /*
+  // In quaternion: negate z component and w component
+  pose_NED.pose.pose.orientation.w = -pose_NED.pose.pose.orientation.w;
+  pose_NED.pose.pose.orientation.z = -pose_NED.pose.pose.orientation.z;
+
+  // Furthermore, we specify yaw offset and the 90 deg to rotate around z axis and apply it to pose_NED orientation
+  tf2::Quaternion q_orig_2, q_rot_2, q_new_2;
+  double r2=0, p2=0, y2=psi_offset - 90*(M_PI/180); // roll, pitch, yaw - order: about X Y Z respectively
+  q_rot_2.setRPY(r2,p2,y2);
+
+  // extract orientation
+  tf2::convert(pose_NED.pose.pose.orientation , q_orig_2);
+
+  // rotate the previous orientation by q_rot_2 and normalize
+  // Here, q_rot_2 is fixed and q_orig_2 is varying (computed by aprilTag)
+  // We have already negated q_orig_2, so can rotate it directly by q_rot_2 specified above
+  q_new_2 = q_rot_2*q_orig_2;
+  q_new_2.normalize();
+
+  // Stuff the final rotation back into the pose 
+  tf2::convert(q_new_2, pose_NED_rot.pose.pose.orientation);
+  */
+
+
+
+
+
+
+  // %%% 4.2: 2D rotation about yaw offset (psi_offset) to align position with NED %%%
+
+  // NB! Z DOWN, hence we have to go in opposite direction (negative yaw_offset) so tag is aligned with true north
+  float apriltag_x_ned, apriltag_y_ned;
+  apriltag_y_ned = pose_NED.pose.pose.position.y*cos(-yaw_offset) - pose_NED.pose.pose.position.x*sin(-yaw_offset); 
+  apriltag_x_ned = pose_NED.pose.pose.position.y*sin(-yaw_offset) + pose_NED.pose.pose.position.x*cos(-yaw_offset);
+
+  // update the position in the final NED frame
+  pose_NED_rot.pose.pose.position.x = apriltag_y_ned;
+  pose_NED_rot.pose.pose.position.y = apriltag_x_ned;
+  pose_NED_rot.pose.pose.position.z = pose_NED.pose.pose.position.z;
+
+
+  return pose_NED_rot;
+}
+
+
 
 void TagDetector::drawDetections (cv_bridge::CvImagePtr image)
 {
