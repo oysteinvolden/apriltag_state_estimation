@@ -725,10 +725,6 @@ geometry_msgs::PoseWithCovarianceStamped TagDetector::makeNEDPose(
   */
 
 
-
-
-
-
   // %%% 4.2: 2D rotation about yaw offset (psi_offset) to align position with NED %%%
 
   // NB! Z DOWN, hence we have to go in opposite direction (negative yaw_offset) so tag is aligned with true north
@@ -743,6 +739,81 @@ geometry_msgs::PoseWithCovarianceStamped TagDetector::makeNEDPose(
 
 
   return pose_NED_rot;
+}
+
+
+// EDIT: alternative to makeTagPose. The last transformations must be done in Matlab with this one. Use makeNEDPose instead.
+geometry_msgs::PoseWithCovarianceStamped TagDetector::makeAlmostNEDPose(
+    const Eigen::Matrix4d& transform,
+    const Eigen::Quaternion<double> rot_quaternion,
+    const std_msgs::Header& header)
+{
+  geometry_msgs::PoseWithCovarianceStamped pose;
+  pose.header = header;
+
+  //===== Position and orientation
+
+
+  // %%% step 1: static transform from camera to center of vehicle in camera frame %%% 
+  
+  // Measured offsets between camera and center of vehicle (in camera frame):
+  // x = 0.06 m, y = 0.3115 m, z = 0.033 m 
+   
+  pose.pose.pose.position.x    = transform(0, 3) - 0.06;
+  pose.pose.pose.position.y    = transform(1, 3) - 0.3115;
+  pose.pose.pose.position.z    = transform(2, 3) - 0.033;
+
+  // We assume no rotation since camera and vehicle both points forward in body frame
+  pose.pose.pose.orientation.x = rot_quaternion.x();
+  pose.pose.pose.orientation.y = rot_quaternion.y();
+  pose.pose.pose.orientation.z = rot_quaternion.z();
+  pose.pose.pose.orientation.w = rot_quaternion.w();
+
+
+  // %%% step 2: inverse transform - from center of vehicle to tag frame %%%
+
+  // pose -> tf
+  tf::Stamped<tf::Transform> tag_transform;
+  tf::poseMsgToTF(pose.pose.pose, tag_transform);
+
+  // tf -> tf inverse
+  tf::Transform tag_transform_inverse;
+  tag_transform_inverse = tag_transform.inverse();
+
+  // tf inverse -> pose inverse
+  geometry_msgs::PoseWithCovarianceStamped pose_inverse;
+  pose_inverse.header = header;
+  tf::poseTFToMsg(tag_transform_inverse, pose_inverse.pose.pose);  
+  
+
+  // %%% step 3: rotate from tag frame to NED frame %%%
+
+  tf2::Quaternion q_orig_1, q_rot_1, q_new_1;
+
+  // extract original orientation
+  tf2::convert(pose_inverse.pose.pose.orientation , q_orig_1);
+
+  // set new rotation
+  double r1=M_PI/2, p1=0, y1=M_PI/2; // roll, pitch, yaw - order: about X Y Z respectively
+  q_rot_1.setRPY(r1,p1,y1);
+  
+  // rotate the previous orientation by q_rot and normalize
+  q_new_1 = q_rot_1*q_orig_1;
+  q_new_1.normalize();
+
+  // pose NED
+  geometry_msgs::PoseWithCovarianceStamped pose_NED;
+  pose_NED.header = header;
+
+  // Stuff the new rotation back into the pose 
+  tf2::convert(q_new_1, pose_NED.pose.pose.orientation);
+ 
+  // update the position in the new reference frame
+  pose_NED.pose.pose.position.x = pose_inverse.pose.pose.position.z;
+  pose_NED.pose.pose.position.y = -pose_inverse.pose.pose.position.x;
+  pose_NED.pose.pose.position.z = -pose_inverse.pose.pose.position.y;
+  
+  return pose_NED;
 }
 
 
