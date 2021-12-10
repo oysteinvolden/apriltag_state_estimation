@@ -382,6 +382,8 @@ AprilTagDetectionArray TagDetector::detectTags (
       geometry_msgs::PoseWithCovarianceStamped bundle_pose =
           makeNEDPose(transform, rot_quaternion, image->header);
 
+    
+
       //geometry_msgs::PoseWithCovarianceStamped bundle_pose =
       //    makeTagPose(transform, rot_quaternion, image->header);
 
@@ -392,6 +394,8 @@ AprilTagDetectionArray TagDetector::detectTags (
       tag_detection.size = bundle.bundleSizes();
       tag_detection_array.detections.push_back(tag_detection);
       detection_names.push_back(bundle.name());
+
+      
     }
   }
 

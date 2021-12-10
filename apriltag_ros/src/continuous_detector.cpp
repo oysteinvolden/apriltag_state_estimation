@@ -53,6 +53,11 @@ void ContinuousDetector::onInit ()
                           &ContinuousDetector::imageCallback, this);
   tag_detections_publisher_ =
       nh.advertise<AprilTagDetectionArray>("tag_detections", 1);
+
+  // EDIT: additional publisher for standard geometry pose (we use bundle pose)
+  tag_pose_publisher_ =
+      nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("apriltag_bundle_pose", 1);
+
   if (draw_tag_detections_image_)
   {
     tag_detections_image_publisher_ = it_->advertise("tag_detections_image", 1);
@@ -86,9 +91,35 @@ void ContinuousDetector::imageCallback (
     return;
   }
 
+  // EDIT
+  AprilTagDetectionArray tag_detection_array = tag_detector_->detectTags(cv_image_,camera_info);
+
   // Publish detected tags in the image by AprilTag 2
-  tag_detections_publisher_.publish(
-      tag_detector_->detectTags(cv_image_,camera_info));
+  //tag_detections_publisher_.publish(
+  //    tag_detector_->detectTags(cv_image_,camera_info));
+
+  tag_detections_publisher_.publish(tag_detection_array);
+
+
+
+  
+  
+
+  int msg_length = tag_detection_array.detections.size();
+
+  // only publish if one bundle pose
+  if(msg_length == 1){
+
+    // publish on standard geometry pose format, assume only one pose
+    geometry_msgs::PoseWithCovarianceStamped apriltag_pose = tag_detection_array.detections[0].pose; 
+
+    // update frame id
+    apriltag_pose.header.frame_id = "apriltag_pose";
+
+    tag_pose_publisher_.publish(apriltag_pose);
+  }
+
+  
 
   // Publish the camera image overlaid by outlines of the detected tags and
   // their payload values

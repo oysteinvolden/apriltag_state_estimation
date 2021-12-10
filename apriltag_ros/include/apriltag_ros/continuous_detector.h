@@ -44,10 +44,10 @@
 #define APRILTAG_ROS_CONTINUOUS_DETECTOR_H
 
 #include "apriltag_ros/common_functions.h"
-
 #include <memory>
-
 #include <nodelet/nodelet.h>
+
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
 namespace apriltag_ros
 {
@@ -72,6 +72,9 @@ class ContinuousDetector: public nodelet::Nodelet
   image_transport::CameraSubscriber camera_image_subscriber_;
   image_transport::Publisher tag_detections_image_publisher_;
   ros::Publisher tag_detections_publisher_;
+
+  // EDIT: extra publisher for standard geometry pose message (we use bundle pose)
+  ros::Publisher tag_pose_publisher_;
 };
 
 } // namespace apriltag_ros
