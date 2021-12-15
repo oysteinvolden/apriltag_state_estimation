@@ -8,4 +8,4 @@ Fusion of camera-tag pose and IMU using multiplicative extended kalman filter (M
  
 - apriltag_ros: ROS interface for AprilTag
 
-- mekf: Camera Pose and IMU fusion using MEKF 
+- mekf: Camera pose and IMU fusion using MEKF 
