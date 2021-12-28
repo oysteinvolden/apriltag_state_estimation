@@ -1,9 +1,5 @@
 #include <mekf/sensor_message_handler.h>
-//#include <geometry_msgs/Vector3.h>
 
-
-
-#include <cmath>
 
 namespace mekf{
 
@@ -88,35 +84,37 @@ namespace mekf{
         
     }
 
+    
+    // *** IMU Callback ***
+    // -----------------------------
+    // * Take in imu messages
+    // * Transform them to body frame
+    // * push imu data to a buffer
+    // ------------------------------
+
     void MessageHandler::imuCallback(const sensor_msgs::ImuConstPtr& imuMsg){
 
         if(prevStampImu_.sec > 0){
+          
+            // delta time
+            const double dt = (imuMsg->header.stamp - prevStampImu_).toSec();
 
             // imu to body transformation
             Eigen::Transform<double,3,Eigen::Affine> imuToBodyT = getImuToBodyT();
     
             // get imu data expressed in body frame
             sensor_msgs::Imu imuInBody = imuTransform(imuMsg, imuToBodyT);
-            
-            // delta time
-            const double delta = (imuMsg->header.stamp - prevStampImu_).toSec();
 
-            // get measurements
-            geometry_msgs::Vector3 ang_vel, lin_acc;
+            // create new sample
+            imuSample new_imu_sample;
+            new_imu_sample.delta_ang = vec3(imuInBody.angular_velocity.x, imuInBody.angular_velocity.y, imuInBody.angular_velocity.z) * dt;
+            new_imu_sample.delta_vel = vec3(imuInBody.linear_acceleration.x, imuInBody.linear_acceleration.y, imuInBody.linear_acceleration.z) * dt;
+            new_imu_sample.delta_ang_dt = dt;
+            new_imu_sample.delta_vel_dt = dt;
+            new_imu_sample.time_us = imuMsg->header.stamp.toSec();
 
-            // TODO: change IMU name
-
-            // angular velocity
-            ang_vel.x = imuMsg->angular_velocity.x;
-            ang_vel.y = imuMsg->angular_velocity.y;
-            ang_vel.z = imuMsg->angular_velocity.z;
-
-            // linear acceleration
-            lin_acc.x = imuMsg->linear_acceleration.x;
-            lin_acc.y = imuMsg->linear_acceleration.y;
-            lin_acc.z = imuMsg->linear_acceleration.z;
-            
-            // update mekf
+            // push to buffer
+            imuBuffer.push(new_imu_sample);
 
         }
 
@@ -125,131 +123,18 @@ namespace mekf{
     }
 
 
-    // ---------------------------------------------------------
-    // - Camera Pose
-    // ---------------------------------------------------------
- 
-    // do not work yet
-    geometry_msgs::PoseWithCovarianceStamped MessageHandler::cameraTransformEigen(const geometry_msgs::PoseWithCovarianceStampedConstPtr& camPoseIn){
+    geometry_msgs::PoseWithCovarianceStamped MessageHandler::cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn){
 
-   
-        // %%% Part 1: BODY transformations - cam to tag pose + "cam to imu" translation offset (translation along left camera optical frame). 
-        
-        // Optical camera frame: X right, Y down, Z forward.
-        // Hence, camera to tag pose is expressed in left camera optical frame and we move to the imu by a static "cam to imu" translation offset (no rotation).
-        // NB! Cam to imu offset is given by ZED API.
-        
-        
-        Eigen::Translation<double,3> t_imu_to_tag(camPoseIn->pose.pose.position.x + 0.023, camPoseIn->pose.pose.position.y + 0.002, camPoseIn->pose.pose.position.z - 0.002); // Obs: check sign
-        //Eigen::Translation<double,3> t_imu_to_tag(camPoseIn->pose.pose.position.x - 0.06, camPoseIn->pose.pose.position.y - 0.3115, camPoseIn->pose.pose.position.z - 0.033); // Obs: check sign
-
-        Eigen::Quaternion<double> R_imu_to_tag(camPoseIn->pose.pose.orientation.w,camPoseIn->pose.pose.orientation.x,camPoseIn->pose.pose.orientation.y,camPoseIn->pose.pose.orientation.z); // no rotation yet
-        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_tag(t_imu_to_tag*R_imu_to_tag); // multiply from right to left, first rotate then translate
-
-        // %%% Part 2:  inverse -> pose is expressed relative to tag frame instead of body IMU/camera frame %%%
-
-        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_tag_inv = T_imu_to_tag.inverse();
-
-
-        // %%% Part 3: Rotate from tag frame to NED frame %%%
-
-        // roll, pitch, yaw - order: about X Y Z respectively 
-        double roll_1=M_PI/2, pitch_1=0, yaw_1=M_PI/2;
-        Eigen::Quaternion<double> R_tag_to_NED;
-        R_tag_to_NED = Eigen::AngleAxis<double>(yaw_1, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxis<double>(pitch_1, Eigen::Vector3d::UnitY()) * Eigen::AngleAxis<double>(roll_1, Eigen::Vector3d::UnitX()); // normalized
-        Eigen::Transform<double,3,Eigen::Affine> T_tag_to_NED(R_tag_to_NED);
-
-        // concatenate transformations
-        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_NED = T_tag_to_NED*T_imu_to_tag_inv; // multiply from right to left: imu -> tag -> NED
-
-        
-        // %%% Part 4: Align heading/position with NED frame %%%
-
-        // %%%% The yaw offset between the axis pointing out of the aprilTag and true north consist of two components: 
-        // %%%% 1. A fixed, measured rotation about Z axis (yaw): 227 degrees
-        // %%%% 2. A small rotation about Z axis (yaw) depending on which marker configuration is used (between 1.5 and 2.5 degrees)
-        // %%%% NB! The small rotation in (2) above is found by subtracting for the constant heading offset between ground truth SBG Ellipse INS and Apriltag
-        // %%%% The same small rotation is tested for multiple scenarios to show reproducibility -> E.g., 227 deg + 1.5 deg is closer to the true yaw offset 
-
-
-        double yaw_offset, yaw_offset_1, yaw_offset_2;
-        yaw_offset_1 = 227*(M_PI/180);
-        yaw_offset_2 = 1.5*(M_PI/180); // TODO: update this! step 1: , step 2: , step 3:  
-        yaw_offset = yaw_offset_1 + yaw_offset_2;
-
-        // %%% 4.1: find heading relative to true North
-
-        // %%%% NB! Given that we have the tag frame as specified by AprilTags and rotate it by R_tag_to_NED,
-        // %%%% we only need to rotate about z axis to find heading relative to true north.
-        // %%%% Hence, we do the following to find the NED heading angle:
-        // %%%% Subtract the measured Apriltag yaw and 90 degrees from the yaw offset (227 + 1.5/2.5 deg)
-        // %%%% Example: Heading = yaw_offset - 90 deg - apriltag_yaw_offset = (227 + 1.5) - 90 - apriltag_yaw_offset
-
-        // NB! Since we want to subtract the yaw measured by aprilTags, we go in opposite (negative since Z down) yaw direction
-
-        // extract euler angles from previous pose
-        Eigen::Matrix3d rot_imu_to_NED = T_imu_to_NED.rotation(); 
-        Eigen::Quaternion<double> quat_imu_to_NED(rot_imu_to_NED);
-
-
-        // %%%%% NB: eulerangles(2,1,0)
-
-        // convert quat to euler
-        double roll_2, pitch_2, yaw_2, yaw_NED;
-        auto euler = quat_imu_to_NED.toRotationMatrix().eulerAngles(0, 1, 2); // roll pitch yaw 
-        roll_2 = euler[0];
-        pitch_2 = euler[1];
-        yaw_2 = euler[2];
-
-        // compute yaw angle relative to north
-        yaw_NED = yaw_offset - 90*(M_PI/180) - yaw_2;
-
-        // convert euler to quat with updated yaw (we do not touch roll and pitch)
-        Eigen::Quaternion<double> R_imu_to_NED_offset;
-        R_imu_to_NED_offset = Eigen::AngleAxis<double>(yaw_NED, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxis<double>(pitch_2, Eigen::Vector3d::UnitY()) * Eigen::AngleAxis<double>(roll_2, Eigen::Vector3d::UnitX()); // normalized
-        
-        // %%% 4.2: 2D rotation about yaw offset to align position with NED %%%
-        
-        // NB! Z DOWN, hence we have to go in opposite direction (negative yaw_offset) so tag is aligned with true north
-        double apriltag_x_ned, apriltag_y_ned;
-        apriltag_y_ned = T_imu_to_NED.translation().y()*cos(-yaw_offset) - T_imu_to_NED.translation().x()*sin(-yaw_offset);
-        apriltag_x_ned = T_imu_to_NED.translation().y()*sin(-yaw_offset) - T_imu_to_NED.translation().x()*cos(-yaw_offset);
-
-        T_imu_to_NED.translation().x() = apriltag_y_ned;
-        T_imu_to_NED.translation().y() = apriltag_x_ned;
-
-
-        // finally convert to geometry pose
-        geometry_msgs::PoseWithCovarianceStamped camPoseOut;
-        camPoseOut.header = camPoseIn->header;
-
-        camPoseOut.pose.pose.position.x = T_imu_to_NED.translation().x();
-        camPoseOut.pose.pose.position.y = T_imu_to_NED.translation().y();
-        camPoseOut.pose.pose.position.z = T_imu_to_NED.translation().z();
-
-        camPoseOut.pose.pose.orientation.w = R_imu_to_NED_offset.w();
-        camPoseOut.pose.pose.orientation.x = R_imu_to_NED_offset.x();
-        camPoseOut.pose.pose.orientation.y = R_imu_to_NED_offset.y();
-        camPoseOut.pose.pose.orientation.z = R_imu_to_NED_offset.z();
-
-
-        return camPoseOut;
-
-    }
-
-
-    // this one works
-    geometry_msgs::PoseWithCovarianceStamped MessageHandler::cameraTransformROS(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn){
 
         geometry_msgs::PoseWithCovarianceStamped pose;
         pose.header = cameraPoseIn->header;
 
         
-         // %%% Part 1: BODY transformations - cam to tag pose + "cam to imu" translation offset (translation along left camera optical frame). 
+        // %%% Part 1: BODY transformations - cam to tag pose + "cam to imu" translation offset (translation along left camera optical frame) %%%
         
-        // Optical camera frame: X right, Y down, Z forward.
-        // Hence, camera to tag pose is expressed in left camera optical frame and we move to the imu by a static "cam to imu" translation offset (no rotation).
-        // NB! Cam to imu offset is given by ZED API.
+        // * Optical camera frame: X right, Y down, Z forward.
+        // * Hence, camera to tag pose is expressed in left camera optical frame and we move to the imu by a static "cam to imu" translation offset (no rotation).
+        // * NB! Cam to imu offset is given by ZED API.
    
         // obs: doublecheck signs
         pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.023;
@@ -276,8 +161,17 @@ namespace mekf{
         // tf inverse -> pose inverse
         geometry_msgs::PoseWithCovarianceStamped pose_inverse;
         pose_inverse.header = cameraPoseIn->header;
-        tf::poseTFToMsg(tag_transform_inverse, pose_inverse.pose.pose);  
-  
+        tf::poseTFToMsg(tag_transform_inverse, pose_inverse.pose.pose);
+
+        // extract orientation
+        tf2::Quaternion q_orig_test;
+        tf2::convert(pose_inverse.pose.pose.orientation , q_orig_test);
+
+        // convert quat to rpy
+        double roll_test, pitch_test, yaw_test;
+        tf2::Matrix3x3(q_orig_test).getRPY(roll_test, pitch_test, yaw_test);
+
+    
 
         // %%% step 3: rotate from tag frame to NED frame %%%
 
@@ -309,11 +203,11 @@ namespace mekf{
 
         // %%% step 4: Align heading/position with NED frame %%%
 
-        // %%%% The yaw offset between the axis pointing out of the aprilTag and true north consist of two components: 
-        // %%%% 1. A fixed, measured rotation about Z axis (yaw): 227 degrees
-        // %%%% 2. A small rotation about Z axis (yaw) depending on which marker configuration is used (between 1.5 and 2.5 degrees)
-        // %%%% NB! The small rotation in (2) above is found by subtracting for the constant heading offset between ground truth SBG Ellipse INS and Apriltag
-        // %%%% The same small rotation is tested for multiple scenarios to show reproducibility -> E.g., 227 deg + 1.5 deg is closer to the true yaw offset 
+        // * The yaw offset between the axis pointing out of the aprilTag and true north consist of two components: 
+        // * 1. A fixed, measured rotation about Z axis (yaw): 227 degrees
+        // * 2. A small rotation about Z axis (yaw) depending on which marker configuration is used (between 1.5 and 2.5 degrees)
+        // * NB! The small rotation in (2) above is found by subtracting for the constant heading offset between ground truth SBG Ellipse INS and Apriltag
+        // * The same small rotation is tested for multiple scenarios to show reproducibility -> E.g., 227 deg + 1.5 deg is closer to the true yaw offset 
 
         // pose rotated NED (to align apriltag with true north) 
         geometry_msgs::PoseWithCovarianceStamped pose_NED_rot;
@@ -321,27 +215,26 @@ namespace mekf{
 
         float yaw_offset, yaw_offset_1, yaw_offset_2;
         yaw_offset_1 = 227*(M_PI/180);
-        yaw_offset_2 = 1.5*(M_PI/180); // TODO: update this! step 1: , step 2: , step 3:  
+        yaw_offset_2 = 1.5*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
         yaw_offset = yaw_offset_1 + yaw_offset_2;
 
 
         // %%% 4.1: find heading relative to true North %%%
 
-        // %%%% NB! Given that we have the tag frame as specified by AprilTags and rotate it by q_rot_1 to get the pose_NED orientation,
-        // %%%% we only need to rotate about z axis to find heading relative to true north.
-        // %%%% Hence, we do the following to find the NED heading angle:
-        // %%%% Subtract the measured Apriltag yaw and 90 degrees from the yaw offset (227 + 1.5/2.5 deg)
-        // %%%% Example: Heading = yaw_offset - 90 deg - apriltag_yaw_offset = (227 + 1.5) - 90 - apriltag_yaw_offset
+        // * NB! Given that we have the tag frame as specified by AprilTag and rotate it by q_rot_1 to get the pose_NED orientation,
+        // * we only need to rotate about z axis to find heading relative to true north.
+        // * Hence, we do the following to find the NED heading angle:
+        // * Subtract the measured Apriltag yaw and 90 degrees from the yaw offset (227 + 1.5 deg)
+        // * Example: Heading = yaw_offset - 90 deg - apriltag_yaw_offset = (227 + 1.5) - 90 - apriltag_yaw_offset
 
-        // NB! Since we want to subtract the yaw measured by aprilTags, we go in opposite (negative since Z down) yaw direction
-
+        // * NB! Since we want to subtract the yaw measured by aprilTags, we go in opposite (negative since Z down) yaw direction
 
         // extract orientation
         tf2::Quaternion q_orig_2;
         tf2::convert(pose_NED.pose.pose.orientation , q_orig_2);
 
         // convert quat to rpy
-            double roll, pitch, yaw, yaw_NED;
+        double roll, pitch, yaw, yaw_NED;
         tf2::Matrix3x3(q_orig_2).getRPY(roll, pitch, yaw);
         
         // compute yaw angle relative to north
@@ -366,44 +259,40 @@ namespace mekf{
         pose_NED_rot.pose.pose.position.y = apriltag_x_ned;
         pose_NED_rot.pose.pose.position.z = pose_NED.pose.pose.position.z;
         
-
         return pose_NED_rot;
      
     }
 
 
 
-
+    // *** Camera Pose Callback ***
+    // -----------------------------
+    // * Take in camera pose messages
+    // * Transform them to NED
+    // * push NED pose data to a buffer
+    // ------------------------------
+    
     void MessageHandler::cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseMsg){
 
         if(prevStampCameraPose_.sec > 0){
 
             // delta time 
-            //const double delta = (cameraPoseMsg->header.stamp - prevStampCameraPose_).toSec();
+            const double dt = (cameraPoseMsg->header.stamp - prevStampCameraPose_).toSec();
 
             // get camera pose expressed in NED frame
-            geometry_msgs::PoseWithCovarianceStamped camInNED = cameraTransformROS(cameraPoseMsg);
+            geometry_msgs::PoseWithCovarianceStamped camPoseNED = cameraTransform(cameraPoseMsg);
+   
+            // create new sample 
+            cameraPoseSample new_pose_sample;
+            new_pose_sample.posNED = vec3(camPoseNED.pose.pose.position.x, camPoseNED.pose.pose.position.y, camPoseNED.pose.pose.position.z);
+            new_pose_sample.quatNED = quat(camPoseNED.pose.pose.orientation.w, camPoseNED.pose.pose.orientation.x, camPoseNED.pose.pose.orientation.y, camPoseNED.pose.pose.orientation.z);
+            new_pose_sample.posErr = 0.05; // TODO: check later
+            new_pose_sample.angErr = 0.05; // TODO: check later
+            new_pose_sample.time_us = cameraPoseMsg->header.stamp.toSec(); // TODO: use same as incoming message?
 
-            //std::cout << camInNED.pose.pose.position << std::endl;
-            
-            // get measurements
-            geometry_msgs::Vector3 pos_cam;
-            geometry_msgs::Quaternion quat_cam;
-
-            // position
-            pos_cam.x = camInNED.pose.pose.position.x;
-            pos_cam.y = camInNED.pose.pose.position.y;
-            pos_cam.z = camInNED.pose.pose.position.z;
-            
-            // quaternion
-            quat_cam.x = camInNED.pose.pose.orientation.x;
-            quat_cam.y = camInNED.pose.pose.orientation.y;
-            quat_cam.z = camInNED.pose.pose.orientation.z;
-            quat_cam.w = camInNED.pose.pose.orientation.w;
-    
-            
-            // update mekf
-       
+            // push to buffer
+            camPoseBuffer.push(new_pose_sample);
+                        
         }
 
         prevStampCameraPose_ = cameraPoseMsg->header.stamp;
@@ -412,7 +301,7 @@ namespace mekf{
 
 
 
-    // TODO: update when mekf is ready
+    // TODO: update later
     void MessageHandler::publishState() {
 
         /*
