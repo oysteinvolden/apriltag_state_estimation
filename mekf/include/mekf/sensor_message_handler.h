@@ -1,3 +1,6 @@
+#ifndef MESSAGE_HANDLER_HPP_
+#define MESSAGE_HANDLER_HPP_
+
 // ROS
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
@@ -13,8 +16,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf/transform_datatypes.h>
 
-#include "common.h"
-#include "buffer.hpp"
+#include <mekf/mekf.h>
 
 
 namespace mekf {
@@ -55,11 +57,14 @@ namespace mekf {
       ros::Time prevStampImu_;
       ros::Time prevStampCameraPose_;
 
-      // FIFO buffers
-      Buffer<cameraPoseSample> camPoseBuffer;
-      Buffer<imuSample> imuBuffer;
-      
+      mekf::MEKF mekf_;
+
+
 
   };
 
-}// namespace mekf
+}
+
+
+
+#endif /* defined(MESSAGE_HANDLER_H_) */

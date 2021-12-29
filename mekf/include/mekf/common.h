@@ -1,3 +1,6 @@
+#ifndef COMMON_H_
+#define COMMON_H_
+
 #include <Eigen/Core>
 #include <Eigen/Dense>
 
@@ -39,5 +42,6 @@ namespace mekf{
     };
   
 
-
 }
+
+#endif /* defined(COMMON_H_) */

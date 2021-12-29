@@ -50,9 +50,7 @@ namespace mekf{
         
         Eigen::Transform<double,3,Eigen::Affine> T_imu_to_body = T_cam_to_body*T_imu_to_cam; // from right to left: imu -> cam -> body
    
-
-        return T_imu_to_body;
-    
+        return T_imu_to_body; 
     }
     
 
@@ -71,7 +69,6 @@ namespace mekf{
         imu_out.angular_velocity.y = vel.y();
         imu_out.angular_velocity.z = vel.z();
 
-
         // linear acceleration
         Eigen::Vector3d acc = T * Eigen::Vector3d(imu_in->linear_acceleration.x, imu_in->linear_acceleration.y, imu_in->linear_acceleration.z);
 
@@ -79,9 +76,7 @@ namespace mekf{
         imu_out.linear_acceleration.y = acc.y();
         imu_out.linear_acceleration.z = acc.z();
 
-
-        return imu_out;
-        
+        return imu_out; 
     }
 
     
@@ -89,7 +84,7 @@ namespace mekf{
     // -----------------------------
     // * Take in imu messages
     // * Transform them to body frame
-    // * push imu data to a buffer
+    // * Send imu sample
     // ------------------------------
 
     void MessageHandler::imuCallback(const sensor_msgs::ImuConstPtr& imuMsg){
@@ -113,8 +108,8 @@ namespace mekf{
             new_imu_sample.delta_vel_dt = dt;
             new_imu_sample.time_us = imuMsg->header.stamp.toSec();
 
-            // push to buffer
-            imuBuffer.push(new_imu_sample);
+            // run kalman filter
+            mekf_.run_mekf(new_imu_sample);
 
         }
 
@@ -269,7 +264,7 @@ namespace mekf{
     // -----------------------------
     // * Take in camera pose messages
     // * Transform them to NED
-    // * push NED pose data to a buffer
+    // * send pose sample
     // ------------------------------
     
     void MessageHandler::cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseMsg){
@@ -290,8 +285,8 @@ namespace mekf{
             new_pose_sample.angErr = 0.05; // TODO: check later
             new_pose_sample.time_us = cameraPoseMsg->header.stamp.toSec(); // TODO: use same as incoming message?
 
-            // push to buffer
-            camPoseBuffer.push(new_pose_sample);
+            // update with pose sample
+            mekf_.updateCamPose(new_pose_sample);
                         
         }
 

@@ -33,6 +33,6 @@ include_directories(include
 )
 
 
-add_executable(${PROJECT_NAME} src/sensor_message_handler.cpp src/node.cpp)
+add_executable(${PROJECT_NAME} src/sensor_message_handler.cpp src/mekf.cpp src/node.cpp)
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
 add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_generate_messages_cpp)

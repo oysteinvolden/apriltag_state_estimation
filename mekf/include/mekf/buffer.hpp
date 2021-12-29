@@ -1,4 +1,9 @@
+  
+#ifndef BUFFER_H_
+#define BUFFER_H_
+
 #include <cstdlib>
+#include <stdint.h>
 
 namespace mekf {
 
@@ -14,24 +19,24 @@ namespace mekf {
 
     bool allocate(int size) {
       if (size <= 0) {
-	return false;
+	      return false;
       }
 
       if (_buffer != NULL) {
-	delete[] _buffer;
+	      delete[] _buffer;
       }
 
       _buffer = new data_type[size];
 
       if (_buffer == NULL) {
-	return false;
+	      return false;
       }
 
       _size = size;
       
       // set the time elements to zero so that bad data is not retrieved from the buffers
       for (unsigned index = 0; index < _size; index++) {
-	_buffer[index].time_us = 0;
+	      _buffer[index].time_us = 0;
       }
       _first_write = true;
       return true;
@@ -47,9 +52,9 @@ namespace mekf {
       int head_new = _head;
 
       if (_first_write) {
-	head_new = _head;
+	      head_new = _head;
       } else {
-	head_new = (_head + 1) % _size;
+	      head_new = (_head + 1) % _size;
       }
 
       _buffer[head_new] = sample;
@@ -57,9 +62,10 @@ namespace mekf {
 
       // move tail if we overwrite it
       if (_head == _tail && !_first_write) {
-	_tail = (_tail + 1) % _size;
-      } else {
-	_first_write = false;
+	      _tail = (_tail + 1) % _size;
+      } 
+      else {
+	      _first_write = false;
       }
     }
 
@@ -75,32 +81,34 @@ namespace mekf {
       return _buffer[_head];
     }
 
+    /*
     inline bool pop_first_older_than(uint64_t timestamp, data_type *sample) {
       // start looking from newest observation data
       for (unsigned i = 0; i < _size; i++) {
-	int index = (_head - i);
-	index = index < 0 ? _size + index : index;
-	if (timestamp >= _buffer[index].time_us && timestamp - _buffer[index].time_us < 100000) {
-	  // TODO Re-evaluate the static cast and usage patterns
-	  memcpy(static_cast<void *>(sample), static_cast<void *>(&_buffer[index]), sizeof(*sample));
-	  // Now we can set the tail to the item which comes after the one we removed
-	  // since we don't want to have any older data in the buffer
-	  if (index == static_cast<int>(_head)) {
-	    _tail = _head;
-	    _first_write = true;
-	  } else {
-	    _tail = (index + 1) % _size;
-	  }
-	_buffer[index].time_us = 0;
-	return true;
+	      int index = (_head - i);
+	      index = index < 0 ? _size + index : index;
+	      if (timestamp >= _buffer[index].time_us && timestamp - _buffer[index].time_us < 100000) {
+	        // TODO Re-evaluate the static cast and usage patterns
+	        memcpy(static_cast<void *>(sample), static_cast<void *>(&_buffer[index]), sizeof(*sample));
+	        // Now we can set the tail to the item which comes after the one we removed
+	        // since we don't want to have any older data in the buffer
+	        if (index == static_cast<int>(_head)) {
+	          _tail = _head;
+	          _first_write = true;
+	        } else {
+	          _tail = (index + 1) % _size;
+	        }
+	      _buffer[index].time_us = 0;
+	      return true;
       }
       if (index == static_cast<int>(_tail)) {
-	// we have reached the tail and haven't got a match
-	return false;
+	      // we have reached the tail and haven't got a match
+	      return false;
       }
     }
     return false;
   }
+  */
   
   data_type &operator[](unsigned index) {
     return _buffer[index];
@@ -133,3 +141,7 @@ namespace mekf {
     bool _first_write;
   };
 }
+
+
+
+#endif /* defined(BUFFER_H_) */
