@@ -1,9 +1,12 @@
-  
 #ifndef BUFFER_H_
 #define BUFFER_H_
 
 #include <cstdlib>
 #include <stdint.h>
+
+#include <cstring>
+
+using namespace std;
 
 namespace mekf {
 
@@ -81,7 +84,7 @@ namespace mekf {
       return _buffer[_head];
     }
 
-    /*
+    
     inline bool pop_first_older_than(uint64_t timestamp, data_type *sample) {
       // start looking from newest observation data
       for (unsigned i = 0; i < _size; i++) {
@@ -89,7 +92,9 @@ namespace mekf {
 	      index = index < 0 ? _size + index : index;
 	      if (timestamp >= _buffer[index].time_us && timestamp - _buffer[index].time_us < 100000) {
 	        // TODO Re-evaluate the static cast and usage patterns
-	        memcpy(static_cast<void *>(sample), static_cast<void *>(&_buffer[index]), sizeof(*sample));
+	        //memcpy(static_cast<void *>(sample), static_cast<void *>(&_buffer[index]), sizeof(*sample));
+          memcpy(sample, &_buffer[index], sizeof(*sample)); // TODO: check if we need static cast later
+
 	        // Now we can set the tail to the item which comes after the one we removed
 	        // since we don't want to have any older data in the buffer
 	        if (index == static_cast<int>(_head)) {
@@ -108,7 +113,7 @@ namespace mekf {
     }
     return false;
   }
-  */
+  
   
   data_type &operator[](unsigned index) {
     return _buffer[index];
@@ -140,8 +145,7 @@ namespace mekf {
     unsigned _head, _tail, _size;
     bool _first_write;
   };
+
 }
-
-
 
 #endif /* defined(BUFFER_H_) */

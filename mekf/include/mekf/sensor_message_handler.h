@@ -25,7 +25,7 @@ namespace mekf {
   
     public:
       
-      static constexpr int publish_rate = 100; // TODO: check later
+      static constexpr int publish_rate = 25; // TODO: check later
       
       MessageHandler(const ros::NodeHandle& nh, const ros::NodeHandle& pnh); 
 
@@ -46,10 +46,6 @@ namespace mekf {
       void imuCallback(const sensor_msgs::ImuConstPtr&);
       void cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr&);
 
-      // IMU transforms
-      sensor_msgs::Imu imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T);
-      Eigen::Transform<double,3,Eigen::Affine> getImuToBodyT();
-
       // Camera pose transforms  
       geometry_msgs::PoseWithCovarianceStamped cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn);  
     
@@ -58,6 +54,9 @@ namespace mekf {
       ros::Time prevStampCameraPose_;
 
       mekf::MEKF mekf_;
+
+      // initalization
+      bool init_;
 
 
 

@@ -3,7 +3,7 @@
 
 namespace mekf{
 
-    MessageHandler::MessageHandler(const ros::NodeHandle &nh, const ros::NodeHandle &pnh) : nh_(pnh){
+    MessageHandler::MessageHandler(const ros::NodeHandle &nh, const ros::NodeHandle &pnh) : nh_(pnh), init_(false) {
         
 
 
@@ -26,96 +26,46 @@ namespace mekf{
     // -------------------------------------------------
 
 
-    // Rotate IMU to align with body frame
-    Eigen::Transform<double,3,Eigen::Affine> MessageHandler::getImuToBodyT(){
-
-        // %%%% Part 1: from IMU to cam %%%%
-
-        // left cam to imu transform - given by ZED API 
-        Eigen::Quaternion<double> R_cam_to_imu(0.99999618, -0.00012207, -0.00272684, -0.00017263); 
-        Eigen::Transform<double,3,Eigen::Affine> T_cam_to_imu(R_cam_to_imu);
-
-        // from IMU to left cam (inverse) - we need this transformation since we know left cam frame is in ENU
-        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_cam = T_cam_to_imu.inverse();
-
-        // %%%% part 2: from cam to body %%%%
-
-        // roll, pitch, yaw - order: about X Y Z respectively 
-        double roll=M_PI, pitch=0, yaw=0;
-        Eigen::Quaternion<double> R_cam_to_body;
-        R_cam_to_body = Eigen::AngleAxis<double>(yaw, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxis<double>(pitch, Eigen::Vector3d::UnitY()) * Eigen::AngleAxis<double>(roll, Eigen::Vector3d::UnitX());
-        Eigen::Transform<double,3,Eigen::Affine> T_cam_to_body(R_cam_to_body);
-
-        // %%% part 3: concatenate transformations -> imu to body
-        
-        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_body = T_cam_to_body*T_imu_to_cam; // from right to left: imu -> cam -> body
-   
-        return T_imu_to_body; 
-    }
-    
-
-    
-    // OBS! we only transform linear acceleration and angular velocity
-    sensor_msgs::Imu MessageHandler::imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T){
-
-        // copy header
-        sensor_msgs::Imu imu_out;
-        imu_out.header = imu_in->header;
-
-        // angular velocity
-        Eigen::Vector3d vel = T * Eigen::Vector3d(imu_in->angular_velocity.x, imu_in->angular_velocity.y, imu_in->angular_velocity.z);
-
-        imu_out.angular_velocity.x = vel.x();
-        imu_out.angular_velocity.y = vel.y();
-        imu_out.angular_velocity.z = vel.z();
-
-        // linear acceleration
-        Eigen::Vector3d acc = T * Eigen::Vector3d(imu_in->linear_acceleration.x, imu_in->linear_acceleration.y, imu_in->linear_acceleration.z);
-
-        imu_out.linear_acceleration.x = acc.x();
-        imu_out.linear_acceleration.y = acc.y();
-        imu_out.linear_acceleration.z = acc.z();
-
-        return imu_out; 
-    }
 
     
     // *** IMU Callback ***
     // -----------------------------
-    // * Take in imu messages
-    // * Transform them to body frame
-    // * Send imu sample
+    // * Take in imu messages 
+    // * Assumes they are in body (X forward, Y right, Z down)
+    // * Extract neccesary data
+    // * run kalman filter with imu data
     // ------------------------------
 
     void MessageHandler::imuCallback(const sensor_msgs::ImuConstPtr& imuMsg){
 
         if(prevStampImu_.sec > 0){
+
+            if(!init_){
+                init_ = true;
+                ROS_INFO("Initialized MEKF");
+            }
           
             // delta time
             const double dt = (imuMsg->header.stamp - prevStampImu_).toSec();
 
-            // imu to body transformation
-            Eigen::Transform<double,3,Eigen::Affine> imuToBodyT = getImuToBodyT();
-    
-            // get imu data expressed in body frame
-            sensor_msgs::Imu imuInBody = imuTransform(imuMsg, imuToBodyT);
-
-            // create new sample
-            imuSample new_imu_sample;
-            new_imu_sample.delta_ang = vec3(imuInBody.angular_velocity.x, imuInBody.angular_velocity.y, imuInBody.angular_velocity.z) * dt;
-            new_imu_sample.delta_vel = vec3(imuInBody.linear_acceleration.x, imuInBody.linear_acceleration.y, imuInBody.linear_acceleration.z) * dt;
-            new_imu_sample.delta_ang_dt = dt;
-            new_imu_sample.delta_vel_dt = dt;
-            new_imu_sample.time_us = imuMsg->header.stamp.toSec();
+            // get measurements
+            vec3 ang_vel = vec3(imuMsg->angular_velocity.x, imuMsg->angular_velocity.y, imuMsg->angular_velocity.z);
+            vec3 lin_acc = vec3(imuMsg->linear_acceleration.x, imuMsg->linear_acceleration.y, imuMsg->linear_acceleration.z);
 
             // run kalman filter
-            mekf_.run_mekf(new_imu_sample);
+            mekf_.run_mekf(ang_vel, lin_acc, static_cast<uint64_t>(imuMsg->header.stamp.toSec()*1e6f), dt);
 
         }
 
         prevStampImu_ = imuMsg->header.stamp;
 
     }
+
+
+
+    // -------------------------------------------------
+    // %%% Camera %%%%
+    // -------------------------------------------------
 
 
     geometry_msgs::PoseWithCovarianceStamped MessageHandler::cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn){
@@ -125,16 +75,14 @@ namespace mekf{
         pose.header = cameraPoseIn->header;
 
         
-        // %%% Part 1: BODY transformations - cam to tag pose + "cam to imu" translation offset (translation along left camera optical frame) %%%
+        // %%% Part 1: static transform from camera to center of vehicle in camera frame %%% 
         
-        // * Optical camera frame: X right, Y down, Z forward.
-        // * Hence, camera to tag pose is expressed in left camera optical frame and we move to the imu by a static "cam to imu" translation offset (no rotation).
-        // * NB! Cam to imu offset is given by ZED API.
+        // Measured offsets between camera and center of vehicle (in camera frame):
+        // x = 0.06 m, y = 0.3115 m, z = 0.033 m 
    
-        // obs: doublecheck signs
-        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.023;
-        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.002;
-        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z + 0.002; 
+        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.06;
+        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115;
+        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - 0.033; 
 
         // no rotation yet
         pose.pose.pose.orientation.x = cameraPoseIn->pose.pose.orientation.x;
@@ -158,15 +106,7 @@ namespace mekf{
         pose_inverse.header = cameraPoseIn->header;
         tf::poseTFToMsg(tag_transform_inverse, pose_inverse.pose.pose);
 
-        // extract orientation
-        tf2::Quaternion q_orig_test;
-        tf2::convert(pose_inverse.pose.pose.orientation , q_orig_test);
-
-        // convert quat to rpy
-        double roll_test, pitch_test, yaw_test;
-        tf2::Matrix3x3(q_orig_test).getRPY(roll_test, pitch_test, yaw_test);
-
-    
+ 
 
         // %%% step 3: rotate from tag frame to NED frame %%%
 
@@ -238,6 +178,8 @@ namespace mekf{
         // we do not touch roll and pitch
         q_orig_2.setRPY(roll, pitch, yaw_NED);
 
+        // TODO: do we need to normalize here?
+
         // Stuff the final rotation back into the pose 
         tf2::convert(q_orig_2, pose_NED_rot.pose.pose.orientation);
 
@@ -264,7 +206,7 @@ namespace mekf{
     // -----------------------------
     // * Take in camera pose messages
     // * Transform them to NED
-    // * send pose sample
+    // * update with pose sample
     // ------------------------------
     
     void MessageHandler::cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseMsg){
@@ -272,21 +214,17 @@ namespace mekf{
         if(prevStampCameraPose_.sec > 0){
 
             // delta time 
-            const double dt = (cameraPoseMsg->header.stamp - prevStampCameraPose_).toSec();
+            const double dt = (cameraPoseMsg->header.stamp - prevStampCameraPose_).toSec(); // neccessary here?
 
-            // get camera pose expressed in NED frame
+            // transform camera pose to NED
             geometry_msgs::PoseWithCovarianceStamped camPoseNED = cameraTransform(cameraPoseMsg);
    
-            // create new sample 
-            cameraPoseSample new_pose_sample;
-            new_pose_sample.posNED = vec3(camPoseNED.pose.pose.position.x, camPoseNED.pose.pose.position.y, camPoseNED.pose.pose.position.z);
-            new_pose_sample.quatNED = quat(camPoseNED.pose.pose.orientation.w, camPoseNED.pose.pose.orientation.x, camPoseNED.pose.pose.orientation.y, camPoseNED.pose.pose.orientation.z);
-            new_pose_sample.posErr = 0.05; // TODO: check later
-            new_pose_sample.angErr = 0.05; // TODO: check later
-            new_pose_sample.time_us = cameraPoseMsg->header.stamp.toSec(); // TODO: use same as incoming message?
+            // get measurements
+            vec3 cam_pos = vec3(camPoseNED.pose.pose.position.x, camPoseNED.pose.pose.position.y, camPoseNED.pose.pose.position.z);
+            quat cam_quat = quat(camPoseNED.pose.pose.orientation.w, camPoseNED.pose.pose.orientation.x, camPoseNED.pose.pose.orientation.y, camPoseNED.pose.pose.orientation.z);
 
             // update with pose sample
-            mekf_.updateCamPose(new_pose_sample);
+            mekf_.updateCamPose(cam_pos, cam_quat, static_cast<uint64_t>(cameraPoseMsg->header.stamp.toSec()*1e6f));
                         
         }
 
