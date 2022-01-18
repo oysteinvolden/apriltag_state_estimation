@@ -169,7 +169,7 @@ namespace mekf{
     
         Ad =  I15 + h*A + (1/2)*(h*A)*(h*A);   
 
-        // linearization of heading measurements
+        // linearization of heading measurement
         vec3 a = (2/q_ins.w()) * vec3(q_ins.x(),q_ins.y(),q_ins.z()); // 2 x Gibbs vector
         double u = 2 * ( a.x()*a.y() + 2*a.z() ) / ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) );
         double du = 1 / (1 + pow(u,2));
@@ -270,10 +270,8 @@ namespace mekf{
             // extract latest camera pose measurements
             cameraPoseSample cam_pose_newest = camPoseBuffer_.get_newest(); 
             vec3 y_pos = cam_pose_newest.posNED;
-
-            // extract euler angles
             quat cam_quat = cam_pose_newest.quatNED; 
-            vec3 cam_euler = q2euler(cam_quat);
+            vec3 cam_euler = q2euler(cam_quat); // extract euler angles
             double y_psi = cam_euler(2);
             
 
@@ -284,16 +282,56 @@ namespace mekf{
             vec3 eps_pos = y_pos - p_ins;
             vec3 eps_g   = v1 - R.transpose() * v01; 
 
-            //double eps_psi = ssa( y_psi - atan(u) );  
+            // smallest signed angle
+            double eps_psi = ssa( y_psi - atan(u) ); // (in radians)
+      
+            // we assume no velocity measurements here
+            eps.block(0,0,3,1) = eps_pos;
+            eps.block(0,3,3,1) = eps_g;
+            eps(0,6) = eps_psi;
 
+            // corrector
+            delta_x_hat = K * eps;
+            P_hat = IKC * P_prd * IKC.transpose() + K * Rd * K.transpose();
 
+            // error quaternion (2 x Gibbs vector)
+            vec3 delta_a = delta_x_hat.block(10,0,3,1);
+            vec4 delta_q_hat_vec = 1/(sqrt(4 + delta_a.transpose() * delta_a)) * vec4(2,delta_a.x(),delta_a.y(),delta_a.z());
+            quat delta_q_hat = quat(delta_q_hat_vec(0),delta_q_hat_vec(1),delta_q_hat_vec(2),delta_q_hat_vec(3)); // vec4 to quat
+
+            // INS reset
+            p_ins = p_ins + delta_x_hat.block(0,0,3,1);	                 // position
+	        v_ins = v_ins + delta_x_hat.block(0,3,3,1);			         // velocity
+	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(0,6,3,1);    // acc bias
+	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(0,13,3,1); // gyro bias
+            
+            q_ins = quatprod(q_ins, delta_q_hat);  // Schur product   
+            q_ins.normalize();                     // normalization
+               
         }
-        
-        // reset vision update flag for each imu update
+
+        // predictor
+        P_prd = Ad * P_hat * Ad.transpose() + Ed * Qd * Ed.transpose();
+
+        // INS propagation: x_ins[k+1]
+        vec3 a_ins = R * f_ins + g_n;                                                          // linear acceleration
+        p_ins = p_ins + h * v_ins + pow(h,2)/2 * a_ins;                                        // exact discretization
+        v_ins = v_ins + h * a_ins;                                                             // exact discretization        
+        vec4 q_ins_vec = Tquat(w_ins*h).exp() * vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()); // exact discretization
+        q_ins = quat(q_ins_vec(0),q_ins_vec(1),q_ins_vec(2),q_ins_vec(3));                     // vec4 to quat 
+        q_ins.normalize();                                                                     // normalization
+
+  
+        // update INS states
+        state_.pos = p_ins;
+        state_.vel = v_ins;
+        state_.accel_bias = acc_bias_ins;
+        state_.quat_nominal = q_ins;
+        state_.gyro_bias = gyro_bias_ins;
+
+        // reset vision update flag for each imu update 
         cam_pose_ready_ = false;
-
-        
-
+      
     }
 
 
@@ -303,6 +341,9 @@ namespace mekf{
     }
 
     // Smallest signed angle (MSS toolbox)
+    double MEKF::ssa(double angle){
+        return ((angle + M_PI) - floor((angle + M_PI)/(2*M_PI)) * 2*M_PI) - M_PI;
+    }
 
 
 

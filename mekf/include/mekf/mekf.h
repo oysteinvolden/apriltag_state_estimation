@@ -61,7 +61,7 @@ namespace mekf{
             double h = 1/f_s; // sampling time [s] 
 
             // sensors delay
-            //scalar_t cam_pose_delay_ = {100.0d}; // vision measurement delay relative to the IMU (mSec) - TODO: neccessary? tune?
+            //scalar_t cam_pose_delay_ = {100.0d}; // vision measurement delay relative to the IMU (mSec) - TODO: neccessary? 
 
             // filter initalization
             bool initializeFilter();
@@ -80,6 +80,8 @@ namespace mekf{
 
             // Covariance and predictor
             Eigen::Matrix<double, k_num_states_, k_num_states_> P_prd, P_hat; 
+
+            // TODO: add k_num_states wherever possible for matrices
 
             // process noise weights: v, acc_bias, w, ars_bias, TODO: static? 12 x 12
             Eigen::Matrix<double, 12, 12> Qd;
@@ -108,7 +110,14 @@ namespace mekf{
             Eigen::Matrix<double, 15, 7> K;
             Eigen::Matrix<double, 15, 15> IKC;
 
+            // smallest signed angle
+            double ssa(double angle);
 
+            // epsilon matrix
+            Eigen::Matrix<double, 7, 1> eps;
+
+            // delta x
+            Eigen::Matrix<double, 15, 1> delta_x_hat;
 
     };
 

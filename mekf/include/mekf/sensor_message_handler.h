@@ -25,7 +25,7 @@ namespace mekf {
   
     public:
       
-      static constexpr int publish_rate = 25; // TODO: check later
+      static constexpr int publish_rate = 25; // TODO: change to 100 later - only for testing SBG data 
       
       MessageHandler(const ros::NodeHandle& nh, const ros::NodeHandle& pnh); 
 

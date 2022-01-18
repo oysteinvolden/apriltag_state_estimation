@@ -3,6 +3,9 @@
 
 #include <Eigen/Core>
 #include <Eigen/Dense>
+#include <Eigen/Eigenvalues>
+
+#include <unsupported/Eigen/MatrixFunctions> // used for matrix exponential
 
 #include <cmath>
 #include <math.h>
@@ -12,8 +15,10 @@ namespace mekf{
 
     typedef float scalar_t;
     typedef Eigen::Matrix<double, 3, 1> vec3;  // Vector in R3
+    typedef Eigen::Matrix<double, 4, 1> vec4;  // Vector in R3
     typedef Eigen::Quaternion<double> quat;    // Member of S4   
     typedef Eigen::Matrix<double, 3, 3> mat3;  // Matrix in R3
+    typedef Eigen::Matrix<double, 4, 4> mat4;   // Matrix in R3
    
     // State vector:
     // * Attitude quaternion
@@ -80,6 +85,72 @@ namespace mekf{
 
     }
 
+    // cross product
+    inline vec3 cross(vec3 a, vec3 b){
+        return vec3(a.x()*b.x(),a.y()*b.y(),a.z()*b.z());
+    }
+
+
+    // Schur product (MSS toolbox)
+    inline quat quatprod(quat q1, quat q2){
+ 
+        double eta1 = q1.w();
+        vec3 eps1 = vec3(q1.x(),q1.y(),q1.z());
+        double eta2 = q2.w();
+        vec3 eps2 = vec3(q2.x(),q2.y(),q2.z());
+        
+        double a = eta1*eta2 - eps1.transpose()*eps2;
+        vec3 b = eta2*eps1 + eta1*eps2 + cross(eps1,eps2);
+
+        return quat(a,b.x(),b.y(),b.z());     
+    }
+
+
+    
+    // Tw = Tquat(w) computes the quaternion transformation matrix Tw of
+    // dimension 4 x 4 for attitude such that q_dot = Tw * q
+    // (MSS toolbox)
+    
+    inline mat4 Tquat(vec3 u){
+
+        // assume angular rates of dimension 3 is used
+        vec3 w = vec3(u.x(),u.y(),u.z());
+
+        mat4 T;
+        T(0,0) = 0;
+        T.block(0,1,1,3) = -w.transpose();
+        T.block(1,0,3,1) = w;
+        T.block(1,1,3,3) = -Smtrx(w);
+
+        return 0.5*T;
+    }
+    
+
+    // Matrix exponential
+    
+    //inline mat4 expm(mat4 X){
+
+        // extract eigenvalues/eigenvectors
+        /*
+        Eigen::EigenSolver<Eigen::Matrix4d> es(X);
+        Eigen::MatrixXcd D = es.eigenvalues();
+        Eigen::MatrixXcd V = es.eigenvectors();
+        */
+ 
+    //    return X.exp(); // return matrix exponential
+    //}
+    
+
+
+
+
+ 
+
+
+
+
+    
+  
 
     // *** tf functions ***
 
