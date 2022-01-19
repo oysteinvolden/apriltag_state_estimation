@@ -24,6 +24,11 @@ namespace mekf{
 
             void run_mekf(const vec3& ang_vel, const vec3& lin_acc, uint64_t time_us, scalar_t dt);
 
+            quat getQuat();
+            vec3 getPosition();
+            vec3 getVelocity();
+            uint64_t getImuTime(); 
+
         private:
 
             
@@ -57,7 +62,7 @@ namespace mekf{
             uint64_t current_cam_pose_time = {0}; // used to check if fresh cam pose is available
 
             // sampling constants
-            int f_s  = 25; // sampling frequency [Hz]
+            int f_s  = 100; // sampling frequency [Hz]
             double h = 1/f_s; // sampling time [s] 
 
             // sensors delay

@@ -36,6 +36,8 @@ namespace mekf{
 
     bool MEKF::initializeFilter(){
 
+        // TODO: do we have to initialize
+
         // initialize covariance
         P_prd.setIdentity(k_num_states_,k_num_states_);
 
@@ -73,6 +75,7 @@ namespace mekf{
 
     void MEKF::run_mekf(const vec3& ang_vel, const vec3& lin_acc, uint64_t time_us, scalar_t dt){
 
+        // TODO: use measured delta time dt or fixed sampling time? Should be consistent at least
 
         // copy imu data
         imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle  (rad)
@@ -165,7 +168,7 @@ namespace mekf{
         A.block(12,12,3,3) = -(1/T_gyro)*I3;
 
 
-        // TODO: use measured delta time dt or fixed sampling time?
+        
     
         Ad =  I15 + h*A + (1/2)*(h*A)*(h*A);   
 
@@ -305,8 +308,8 @@ namespace mekf{
 	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(0,6,3,1);    // acc bias
 	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(0,13,3,1); // gyro bias
             
-            q_ins = quatprod(q_ins, delta_q_hat);  // Schur product   
-            q_ins.normalize();                     // normalization
+            q_ins = quatprod(q_ins, delta_q_hat);                        // Schur product   
+            q_ins.normalize();                                           // normalization
                
         }
 
@@ -343,6 +346,25 @@ namespace mekf{
     // Smallest signed angle (MSS toolbox)
     double MEKF::ssa(double angle){
         return ((angle + M_PI) - floor((angle + M_PI)/(2*M_PI)) * 2*M_PI) - M_PI;
+    }
+
+
+    // TODO: if we fuse measurements in imu frame, transform measurements to center of vehicle here
+
+    quat MEKF::getQuat(){
+        return state_.quat_nominal;
+    }
+
+    vec3 MEKF::getPosition(){
+        return state_.pos;
+    }
+
+    vec3 MEKF::getVelocity(){
+        return state_.vel;
+    }
+
+    uint64_t MEKF::getImuTime(){
+        return time_last_imu_; 
     }
 
 

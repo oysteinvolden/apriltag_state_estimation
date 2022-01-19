@@ -25,7 +25,7 @@ namespace mekf {
   
     public:
       
-      static constexpr int publish_rate = 25; // TODO: change to 100 later - only for testing SBG data 
+      static constexpr int publish_rate_ = 100; 
       
       MessageHandler(const ros::NodeHandle& nh, const ros::NodeHandle& pnh); 
 
@@ -36,7 +36,7 @@ namespace mekf {
 
       // publisher
       ros::Publisher pubEstimatedPose_;
-      void publishState();
+      void publishState(const ros::TimerEvent&);
 
       // subscribers
       ros::Subscriber subImu_;
@@ -46,12 +46,17 @@ namespace mekf {
       void imuCallback(const sensor_msgs::ImuConstPtr&);
       void cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr&);
 
+      // IMU transforms
+      sensor_msgs::Imu imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T);
+      Eigen::Transform<double,3,Eigen::Affine> getImuToBodyT();
+
       // Camera pose transforms  
       geometry_msgs::PoseWithCovarianceStamped cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn);  
     
       // timing
       ros::Time prevStampImu_;
       ros::Time prevStampCameraPose_;
+      ros::Timer pubTimer_;
 
       mekf::MEKF mekf_;
 

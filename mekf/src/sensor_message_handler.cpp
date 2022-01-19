@@ -15,8 +15,10 @@ namespace mekf{
         
         subCameraPose_ = nh_.subscribe("/apriltag_bundle_pose", 1, &MessageHandler::cameraPoseCallback, this);
 
-        //pubEstimatedPose_ = nh_.advertise<nav_msgs::Odometry>("estimated_pose", 1);
+        pubEstimatedPose_ = nh_.advertise<nav_msgs::Odometry>("mekf_pose", 1);
 
+        int publish_rate = publish_rate_;
+        pubTimer_ = nh_.createTimer(ros::Duration(1.0f/publish_rate), &MessageHandler::publishState, this);
 
     }
 
@@ -26,39 +28,96 @@ namespace mekf{
     // -------------------------------------------------
 
 
+    // Rotate IMU to align with body frame (X forward, Y right, Z down)
+    Eigen::Transform<double,3,Eigen::Affine> MessageHandler::getImuToBodyT(){
+
+        // %%%% Part 1: from IMU to cam %%%%
+
+        // left cam to imu transform - given by ZED API 
+        Eigen::Quaternion<double> R_cam_to_imu(0.99999618, -0.00012207, -0.00272684, -0.00017263); 
+        Eigen::Transform<double,3,Eigen::Affine> T_cam_to_imu(R_cam_to_imu);
+
+        // from IMU to left cam (inverse) - we need this transformation since we know left cam frame is in ENU
+        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_cam = T_cam_to_imu.inverse();
+
+        // %%%% part 2: from cam to body %%%%
+
+        // roll, pitch, yaw - order: about X Y Z respectively 
+        double roll=M_PI, pitch=0, yaw=0;
+        Eigen::Quaternion<double> R_cam_to_body;
+        R_cam_to_body = Eigen::AngleAxis<double>(yaw, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxis<double>(pitch, Eigen::Vector3d::UnitY()) * Eigen::AngleAxis<double>(roll, Eigen::Vector3d::UnitX());
+        Eigen::Transform<double,3,Eigen::Affine> T_cam_to_body(R_cam_to_body);
+
+        // %%% part 3: concatenate transformations -> imu to body
+        
+        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_body = T_cam_to_body*T_imu_to_cam; // from right to left: imu -> cam -> body
+   
+        return T_imu_to_body; 
+    }
+
+
+
+    // OBS! we only transform linear acceleration and angular velocity
+    sensor_msgs::Imu MessageHandler::imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T){
+
+        // copy header
+        sensor_msgs::Imu imu_out;
+        imu_out.header = imu_in->header;
+
+        // angular velocity
+        Eigen::Vector3d vel = T * Eigen::Vector3d(imu_in->angular_velocity.x, imu_in->angular_velocity.y, imu_in->angular_velocity.z);
+
+        imu_out.angular_velocity.x = vel.x();
+        imu_out.angular_velocity.y = vel.y();
+        imu_out.angular_velocity.z = vel.z();
+
+        // linear acceleration
+        Eigen::Vector3d acc = T * Eigen::Vector3d(imu_in->linear_acceleration.x, imu_in->linear_acceleration.y, imu_in->linear_acceleration.z);
+
+        imu_out.linear_acceleration.x = acc.x();
+        imu_out.linear_acceleration.y = acc.y();
+        imu_out.linear_acceleration.z = acc.z();
+
+        return imu_out; 
+    }
+
 
     
     // *** IMU Callback ***
     // -----------------------------
     // * Take in imu messages 
-    // * Assumes they are in body (X forward, Y right, Z down)
-    // * Extract neccesary data
+    // * Reduce frequency from 400 Hz to 100 Hz 
+    // * Transform imu data to body frame
     // * run kalman filter with imu data
     // ------------------------------
 
     void MessageHandler::imuCallback(const sensor_msgs::ImuConstPtr& imuMsg){
 
-        if(prevStampImu_.sec > 0){
+        // Since ZED IMU run on 400 Hz whatsoever, we simply accept every fourth imu message to get approx 100 hz
+        if((imuMsg->header.seq%4) == 0){
 
-            if(!init_){
-                init_ = true;
-                ROS_INFO("Initialized MEKF");
+            if(prevStampImu_.sec > 0){
+
+                if(!init_){
+                    init_ = true;
+                    ROS_INFO("Initialized MEKF");
+                }   
+            
+                // delta time
+                const double dt = (imuMsg->header.stamp - prevStampImu_).toSec(); // TODO: only neccessary if we don't use fixed sampling time (h)
+
+                // get measurements
+                vec3 ang_vel = vec3(imuMsg->angular_velocity.x, imuMsg->angular_velocity.y, imuMsg->angular_velocity.z);
+                vec3 lin_acc = vec3(imuMsg->linear_acceleration.x, imuMsg->linear_acceleration.y, imuMsg->linear_acceleration.z);
+
+                // run kalman filter
+                mekf_.run_mekf(ang_vel, lin_acc, static_cast<uint64_t>(imuMsg->header.stamp.toSec()*1e6f), dt);
+
             }
-          
-            // delta time
-            const double dt = (imuMsg->header.stamp - prevStampImu_).toSec();
 
-            // get measurements
-            vec3 ang_vel = vec3(imuMsg->angular_velocity.x, imuMsg->angular_velocity.y, imuMsg->angular_velocity.z);
-            vec3 lin_acc = vec3(imuMsg->linear_acceleration.x, imuMsg->linear_acceleration.y, imuMsg->linear_acceleration.z);
-
-            // run kalman filter
-            mekf_.run_mekf(ang_vel, lin_acc, static_cast<uint64_t>(imuMsg->header.stamp.toSec()*1e6f), dt);
-
+            prevStampImu_ = imuMsg->header.stamp;
+        
         }
-
-        prevStampImu_ = imuMsg->header.stamp;
-
     }
 
 
@@ -74,16 +133,28 @@ namespace mekf{
         geometry_msgs::PoseWithCovarianceStamped pose;
         pose.header = cameraPoseIn->header;
 
-        
-        // %%% Part 1: static transform from camera to center of vehicle in camera frame %%% 
-        
+
+        // %%% Part 1: BODY transformations 
+        // Add "cam to imu" translation offset (in camera optical frame) to the "cam to tag pose" %%%
+        // * Optical camera frame: X right, Y down, Z forward.
+        // * Hence, camera to tag pose is expressed in left camera optical frame
+        // * and we move it to imu frame by a static "cam to imu" translation offset (no rotation).
+        // * NB! Cam to imu offset is given by ZED Sterelabs API.
+   
+        // TODO: doublecheck signs
+        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.023;
+        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.002;
+        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z + 0.002; 
+ 
+        // if we use static transform from camera to center of vehicle in camera frame instead %%% 
         // Measured offsets between camera and center of vehicle (in camera frame):
         // x = 0.06 m, y = 0.3115 m, z = 0.033 m 
    
-        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.06;
-        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115;
-        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - 0.033; 
+        //pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.06;
+        //pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115;
+        //pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - 0.033; 
 
+        
         // no rotation yet
         pose.pose.pose.orientation.x = cameraPoseIn->pose.pose.orientation.x;
         pose.pose.pose.orientation.y = cameraPoseIn->pose.pose.orientation.y;
@@ -214,7 +285,7 @@ namespace mekf{
         if(prevStampCameraPose_.sec > 0){
 
             // delta time 
-            const double dt = (cameraPoseMsg->header.stamp - prevStampCameraPose_).toSec(); // neccessary here?
+            const double dt = (cameraPoseMsg->header.stamp - prevStampCameraPose_).toSec(); // TODO: neccessary?
 
             // transform camera pose to NED
             geometry_msgs::PoseWithCovarianceStamped camPoseNED = cameraTransform(cameraPoseMsg);
@@ -235,9 +306,9 @@ namespace mekf{
 
 
     // TODO: update later
-    void MessageHandler::publishState() {
+    void MessageHandler::publishState(const ros::TimerEvent&) {
 
-        /*
+        
         // get mekf results
         const quat e2g = mekf_.getQuat();
         const vec3 position = mekf_.getPosition();
@@ -247,7 +318,12 @@ namespace mekf{
         std_msgs::Header header;
         header.frame_id = "/pose_mekf";
         header.seq = trace_id_++;
-        header.stamp = ros::Time::now();
+
+        // we use imu time to compare with rosbags
+        // use ros::Time::now() in real-time applications
+        ros::Time imu_time(mekf_.getImuTime()); 
+        header.stamp = imu_time; 
+        //header.stamp = ros::Time::now();
 
         nav_msgs::Odometry odom;
         odom.header = header;
@@ -263,7 +339,7 @@ namespace mekf{
         odom.pose.pose.orientation.z = e2g.z();
 
         pubEstimatedPose_.publish(odom);
-        */
+        
     }
 
 
