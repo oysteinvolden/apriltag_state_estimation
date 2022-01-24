@@ -69,17 +69,17 @@ namespace mekf{
         q.normalize();
         mat3 R = q.toRotationMatrix();
 
-        phi = atan2(R(3,2),R(3,3));
+        phi = atan2(R.coeff(3,2),R.coeff(3,3));
 
-        if(abs(R(3,1)) > 1){
-            R(3,1) = signbit(R(3,1));
+        if(abs(R.coeff(3,1)) > 1){
+            R(3,1) = signbit(R.coeff(3,1));
         }
         else
         {
-            theta = -asin(R(3,1));
+            theta = -asin(R.coeff(3,1));
         }
 
-        psi = atan2(R(2,1),R(1,1));
+        psi = atan2(R.coeff(2,1),R.coeff(1,1));
         
         return vec3(phi,theta,psi);
 
@@ -124,7 +124,29 @@ namespace mekf{
 
         return 0.5*T;
     }
-    
+
+
+    inline mat3 Rquat(quat q){
+
+        double tol = 1e-6;
+
+        if( abs( q.norm() - 1 ) > tol ){
+            std::cout << "norm(q) must be equal to 1" << std::endl;
+        }
+
+        double eta = q.w();
+        vec3 eps = vec3(q.x(),q.y(),q.z());
+
+        mat3 S = Smtrx(eps);
+
+        mat3 I_33;
+        I_33.setIdentity();
+
+        return I_33 + 2*eta*S + 2*S*S;
+
+    }
+
+  
 
     // Matrix exponential
     
@@ -141,16 +163,7 @@ namespace mekf{
     //}
     
 
-
-
-
- 
-
-
-
-
-    
-  
+      
 
     // *** tf functions ***
 

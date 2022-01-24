@@ -98,20 +98,28 @@ namespace mekf{
 
             if(prevStampImu_.sec > 0){
 
+                
                 if(!init_){
                     init_ = true;
                     ROS_INFO("Initialized MEKF");
                 }   
             
                 // delta time
-                const double dt = (imuMsg->header.stamp - prevStampImu_).toSec(); // TODO: only neccessary if we don't use fixed sampling time (h)
+                double dt = (imuMsg->header.stamp - prevStampImu_).toSec(); // TODO: only neccessary if we don't use fixed sampling time (h)
+
+                // imu to body transformation
+                Eigen::Transform<double,3,Eigen::Affine> imuToBodyT = getImuToBodyT();
+
+                // transform imu data to body frame
+                sensor_msgs::Imu imuInBody = imuTransform(imuMsg, imuToBodyT);
 
                 // get measurements
-                vec3 ang_vel = vec3(imuMsg->angular_velocity.x, imuMsg->angular_velocity.y, imuMsg->angular_velocity.z);
-                vec3 lin_acc = vec3(imuMsg->linear_acceleration.x, imuMsg->linear_acceleration.y, imuMsg->linear_acceleration.z);
+                vec3 ang_vel = vec3(imuInBody.angular_velocity.x, imuInBody.angular_velocity.y, imuInBody.angular_velocity.z);
+                vec3 lin_acc = vec3(imuInBody.linear_acceleration.x, imuInBody.linear_acceleration.y, imuInBody.linear_acceleration.z);
 
                 // run kalman filter
                 mekf_.run_mekf(ang_vel, lin_acc, static_cast<uint64_t>(imuMsg->header.stamp.toSec()*1e6f), dt);
+
 
             }
 
@@ -321,9 +329,10 @@ namespace mekf{
 
         // we use imu time to compare with rosbags
         // use ros::Time::now() in real-time applications
-        ros::Time imu_time(mekf_.getImuTime()); 
-        header.stamp = imu_time; 
-        //header.stamp = ros::Time::now();
+        
+        //ros::Time imu_time(mekf_.getImuTime()); 
+        //header.stamp = imu_time; 
+        header.stamp = ros::Time::now();
 
         nav_msgs::Odometry odom;
         odom.header = header;

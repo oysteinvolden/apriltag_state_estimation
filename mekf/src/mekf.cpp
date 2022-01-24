@@ -36,18 +36,18 @@ namespace mekf{
 
     bool MEKF::initializeFilter(){
 
-        // TODO: do we have to initialize
+        // TODO: do we have to initialize more here?
 
         // initialize covariance
         P_prd.setIdentity(k_num_states_,k_num_states_);
 
-        // TODO: tune Q_d and R_d later
+        // TODO: tune Qd and Rd 
 
         // initialize process weights
         Qd.diagonal() << 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.001, 0.001, 0.001;
 
         // initialize measurement weights
-        Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.01;
+        Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.1; // p - acc - psi
 
         return true;
     }
@@ -55,7 +55,6 @@ namespace mekf{
 
     void MEKF::updateCamPose(const vec3& cam_pos, const quat& cam_quat, uint64_t time_usec){
 
-        // calculate the system time-stamp for the mid point of the integration period
         // copy required data
         cam_pose_sample_new_.posNED = cam_pos;
         cam_pose_sample_new_.quatNED = cam_quat;
@@ -78,18 +77,30 @@ namespace mekf{
         // TODO: use measured delta time dt or fixed sampling time? Should be consistent at least
 
         // copy imu data
-        imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle  (rad)
-        imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()) * dt; // current delta velocity (m/s)
+        imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle [rad]
+        imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()) * dt; // current delta velocity [m/s]
         imu_sample_new_.delta_ang_dt = dt;
         imu_sample_new_.delta_vel_dt = dt;
         imu_sample_new_.time_us = time_us;
         time_last_imu_ = time_us; // update last time
 
+
         // push to buffer
         imuBuffer_.push(imu_sample_new_); 
+
   
         // get the oldest data from the buffer
+
+        // TODO: use get_oldest when the rest works
         imu_sample_delayed_ = imuBuffer_.get_oldest(); // TODO: neccessary or can we use imu_sample_new directly?
+        //imu_sample_delayed_ = imuBuffer_.get_newest();
+
+
+
+        // TODO: update test criteria
+        if(imu_sample_delayed_.delta_vel.x() == 0){
+            return;
+        }
 
 
         // check if filter is initialized
@@ -114,7 +125,7 @@ namespace mekf{
         // % WGS-84 gravity model
         g = gravity(mu);
         g_n << 0, 0, g;
-        
+       
         // Constants
         O3.setZero(3,3);
         O_13.setZero(1,3);
@@ -126,16 +137,19 @@ namespace mekf{
         v01 << 0, 0, 1; 
 
         // Rotation matrix 
-        q_ins.normalize(); // TODO: Do we need to normalize here?
+        //q_ins.normalize(); // TODO: Do we need to normalize here?
         R = q_ins.toRotationMatrix(); 
 
         // Bias compensated IMU measurements
         vec3 f_ins = imu_sample_delayed_.delta_vel - acc_bias_ins; 
         vec3 w_ins = imu_sample_delayed_.delta_ang - gyro_bias_ins;
-        
+
+
         // * Discrete-time KF matrices *
 
         // TODO: move the static parts of the matrices to initialization?
+
+        // TODO: use fixed-size notation instead?
 
         A.block(0,0,3,3) = O3;
         A.block(0,3,3,3) = I3;
@@ -167,19 +181,24 @@ namespace mekf{
         A.block(12,9,3,3) = O3;
         A.block(12,12,3,3) = -(1/T_gyro)*I3;
 
+   
 
-        
-    
-        Ad =  I15 + h*A + (1/2)*(h*A)*(h*A);   
+        Ad =  I15 + h*A + 0.5*(h*A)*(h*A);   
+
 
         // linearization of heading measurement
         vec3 a = (2/q_ins.w()) * vec3(q_ins.x(),q_ins.y(),q_ins.z()); // 2 x Gibbs vector
+
+
         double u = 2 * ( a.x()*a.y() + 2*a.z() ) / ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) );
+
+
         double du = 1 / (1 + pow(u,2));
-        vec3 c_psi = du * ( 1 / pow( (4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2)), 2) ) * 
-                vec3( -2*( pow(a.x(),2) + pow(a.z(),2) - 4 )*a.y() + pow(a.y(),3) + 4*a.x()*a.z(),
-                       2*( pow(a.y(),2) - pow(a.z(),2) + 4 )*a.x() + pow(a.x(),3) + 4*a.y()*a.z(),
+        vec3 c_psi = du * ( 1 / pow( ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) ), 2) ) * 
+                vec3( -2*(( pow(a.x(),2) + pow(a.z(),2) - 4 )*a.y() + pow(a.y(),3) + 4*a.x()*a.z()),
+                       2*(( pow(a.y(),2) - pow(a.z(),2) + 4 )*a.x() + pow(a.x(),3) + 4*a.y()*a.z()),
                        4*( pow(a.z(),2) + a.x()*a.y()*a.z() + pow(a.x(),2) - pow(a.y(),2) + 4 ));
+
 
 
         // We asssume no velocity meausurements available 
@@ -197,11 +216,11 @@ namespace mekf{
         Cd.block(3,6,3,3) = O3;
         Cd.block(3,9,3,3) = Smtrx(R.transpose()*v01);
         Cd.block(3,12,3,3) = O3;
-
+        
         // Camera heading
-        Cd.block(6,0,3,3) = O_19;
-        Cd.block(6,9,3,3) = c_psi.transpose();
-        Cd.block(6,12,3,3) = O_13;
+        Cd.block(6,0,1,9) = O_19; 
+        Cd.block(6,9,1,3) = c_psi.transpose();
+        Cd.block(6,12,1,3) = O_13;
 
         
         Ed.block(0,0,3,3) = O3;
@@ -229,6 +248,8 @@ namespace mekf{
         Ed.block(12,6,3,3) = O3;
         Ed.block(12,9,3,3) = I3;
 
+
+
         
         
         // %%% kalman filter algorithm %%%
@@ -255,7 +276,8 @@ namespace mekf{
         // -> remove old data in buffer (set tail to the item that comes after the one we removed)
         // -> return true
         cam_pose_ready_ = camPoseBuffer_.pop_first_older_than(imu_sample_delayed_.time_us, &cam_pose_delayed_); 
-        
+
+   
         // no camera pose measurements available (no aiding)
         if(!cam_pose_ready_){
 
@@ -266,17 +288,41 @@ namespace mekf{
         // camera pose measurements available (INS aiding)
         else{
 
+            K.setZero(15,7); // TODO: initialize before?
+
             // KF gain
             K = P_prd * Cd.transpose() * (Cd * P_prd * Cd.transpose() + Rd).inverse(); 
+
+            IKC.setZero(15,15); // TODO: initialize before?
             IKC = I15 - K * Cd;
 
             // extract latest camera pose measurements
             cameraPoseSample cam_pose_newest = camPoseBuffer_.get_newest(); 
             vec3 y_pos = cam_pose_newest.posNED;
-            quat cam_quat = cam_pose_newest.quatNED; 
-            vec3 cam_euler = q2euler(cam_quat); // extract euler angles
-            double y_psi = cam_euler(2);
             
+            
+            quat cam_quat = cam_pose_newest.quatNED; 
+            
+            // position are extracted directly while orientation are converted from quat to euler, TODO: use quat2euler instead?
+            geometry_msgs::Quaternion quat_msg;
+
+	        quat_msg.x = cam_quat.x();
+	        quat_msg.y = cam_quat.y();
+	        quat_msg.z = cam_quat.z();
+	        quat_msg.w = cam_quat.w();
+
+	        // quat -> tf
+	        tf::Quaternion quat2;
+	        tf::quaternionMsgToTF(quat_msg, quat2);
+
+            double roll, pitch, yaw;
+            tf::Matrix3x3(quat2).getRPY(roll, pitch, yaw); 
+            
+            double y_psi = yaw;
+            
+                        
+            std::cout << "y_pos: " << std::endl;
+            std::cout << y_pos << std::endl;
 
             // estimation error
             vec3 v1 = -f_ins/g; // gravity vector
@@ -285,36 +331,41 @@ namespace mekf{
             vec3 eps_pos = y_pos - p_ins;
             vec3 eps_g   = v1 - R.transpose() * v01; 
 
+
+            std::cout << "y psi: " << y_psi*(180/M_PI) << std::endl;
+
             // smallest signed angle
-            double eps_psi = ssa( y_psi - atan(u) ); // (in radians)
-      
+            double eps_psi = ssa(y_psi - atan(u)); // (in radians)
+
             // we assume no velocity measurements here
             eps.block(0,0,3,1) = eps_pos;
-            eps.block(0,3,3,1) = eps_g;
-            eps(0,6) = eps_psi;
+            eps.block(3,0,3,1) = eps_g;
+            eps(6,0) = eps_psi;
 
             // corrector
             delta_x_hat = K * eps;
             P_hat = IKC * P_prd * IKC.transpose() + K * Rd * K.transpose();
 
             // error quaternion (2 x Gibbs vector)
-            vec3 delta_a = delta_x_hat.block(10,0,3,1);
+            vec3 delta_a = delta_x_hat.block(9,0,3,1);
             vec4 delta_q_hat_vec = 1/(sqrt(4 + delta_a.transpose() * delta_a)) * vec4(2,delta_a.x(),delta_a.y(),delta_a.z());
             quat delta_q_hat = quat(delta_q_hat_vec(0),delta_q_hat_vec(1),delta_q_hat_vec(2),delta_q_hat_vec(3)); // vec4 to quat
 
             // INS reset
             p_ins = p_ins + delta_x_hat.block(0,0,3,1);	                 // position
-	        v_ins = v_ins + delta_x_hat.block(0,3,3,1);			         // velocity
-	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(0,6,3,1);    // acc bias
-	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(0,13,3,1); // gyro bias
+	        v_ins = v_ins + delta_x_hat.block(3,0,3,1);			         // velocity
+	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(6,0,3,1);    // acc bias
+	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(12,0,3,1); // gyro bias
             
-            q_ins = quatprod(q_ins, delta_q_hat);                        // Schur product   
+            q_ins = quatprod(q_ins, delta_q_hat);                        // schur product   
             q_ins.normalize();                                           // normalization
-               
+
         }
+
 
         // predictor
         P_prd = Ad * P_hat * Ad.transpose() + Ed * Qd * Ed.transpose();
+
 
         // INS propagation: x_ins[k+1]
         vec3 a_ins = R * f_ins + g_n;                                                          // linear acceleration
@@ -324,7 +375,6 @@ namespace mekf{
         q_ins = quat(q_ins_vec(0),q_ins_vec(1),q_ins_vec(2),q_ins_vec(3));                     // vec4 to quat 
         q_ins.normalize();                                                                     // normalization
 
-  
         // update INS states
         state_.pos = p_ins;
         state_.vel = v_ins;
@@ -332,7 +382,30 @@ namespace mekf{
         state_.quat_nominal = q_ins;
         state_.gyro_bias = gyro_bias_ins;
 
-        // reset vision update flag for each imu update 
+        
+        std::cout << "estimated pos: " << std::endl;
+        std::cout << state_.pos << std::endl;
+
+
+        // convert quat to euler, TODO: use quat2euler instead?
+        geometry_msgs::Quaternion quat_msg2;
+
+        quat_msg2.x = q_ins.x();
+	    quat_msg2.y = q_ins.y();
+	    quat_msg2.z = q_ins.z();
+	    quat_msg2.w = q_ins.w();
+
+	    // quat -> tf
+	    tf::Quaternion quat3;
+	    tf::quaternionMsgToTF(quat_msg2, quat3);
+
+        double roll_est, pitch_est, yaw_est;
+        tf::Matrix3x3(quat3).getRPY(roll_est, pitch_est, yaw_est); 
+
+        std::cout << "estimated yaw: " << yaw_est*(180/M_PI) << std::endl;
+
+
+        // reset vision flag after each INS update 
         cam_pose_ready_ = false;
       
     }
@@ -348,8 +421,10 @@ namespace mekf{
         return ((angle + M_PI) - floor((angle + M_PI)/(2*M_PI)) * 2*M_PI) - M_PI;
     }
 
-
+    
     // TODO: if we fuse measurements in imu frame, transform measurements to center of vehicle here
+
+
 
     quat MEKF::getQuat(){
         return state_.quat_nominal;

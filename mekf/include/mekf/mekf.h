@@ -1,11 +1,19 @@
 #ifndef MEKF_H_
 #define MEKF_H_
 
+#include <ros/ros.h>
+
+#include <tf/transform_datatypes.h>
+#include <tf/LinearMath/Matrix3x3.h>
+
+#include <iostream>
+#include <math.h>
 
 #include "buffer.hpp"
 #include "common.h"
 
-#include <math.h>
+
+
 
 
 
@@ -32,7 +40,6 @@ namespace mekf{
         private:
 
             
-
             // state
             state state_;
             
@@ -43,7 +50,6 @@ namespace mekf{
             // FIFO buffer lengths 
             const int cam_buffer_length_ {9};  // TODO: check lengths
             const int imu_buffer_length_ {15}; // TODO: check lengths
-
 
             // new samples
             imuSample imu_sample_new_ {};  // imu sample capturing the newest imu data
@@ -62,8 +68,8 @@ namespace mekf{
             uint64_t current_cam_pose_time = {0}; // used to check if fresh cam pose is available
 
             // sampling constants
-            int f_s  = 100; // sampling frequency [Hz]
-            double h = 1/f_s; // sampling time [s] 
+            const double f_s  = 100; // sampling frequency [Hz]
+            const double h = 1/f_s; // sampling time [s]
 
             // sensors delay
             //scalar_t cam_pose_delay_ = {100.0d}; // vision measurement delay relative to the IMU (mSec) - TODO: neccessary? 
@@ -88,15 +94,15 @@ namespace mekf{
 
             // TODO: add k_num_states wherever possible for matrices
 
-            // process noise weights: v, acc_bias, w, ars_bias, TODO: static? 12 x 12
+            // process noise weights: v, acc_bias, w, ars_bias
             Eigen::Matrix<double, 12, 12> Qd;
 
             // measurement noise - position aiding + compass 
             Eigen::Matrix<double, 7, 7> Rd;
 
             // constant matrices
-            Eigen::Matrix<double,3,3> O3, I3;
-            Eigen::Matrix<double,15,15> I15;
+            Eigen::Matrix<double, 3, 3> O3, I3;
+            Eigen::Matrix<double, 15, 15> I15;
             Eigen::Matrix<double, 1, 3> O_13;
             Eigen::Matrix<double, 1, 9> O_19;
 
@@ -121,7 +127,7 @@ namespace mekf{
             // epsilon matrix
             Eigen::Matrix<double, 7, 1> eps;
 
-            // delta x
+            // estimated error state
             Eigen::Matrix<double, 15, 1> delta_x_hat;
 
     };
