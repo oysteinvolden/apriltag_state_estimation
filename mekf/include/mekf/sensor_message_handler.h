@@ -19,6 +19,9 @@
 #include <mekf/mekf.h>
 
 
+
+
+
 namespace mekf {
 
   class MessageHandler {
@@ -52,6 +55,9 @@ namespace mekf {
 
       // Camera pose transforms  
       geometry_msgs::PoseWithCovarianceStamped cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn);  
+
+      // Move estimated position from imu to center of vehicle after fusion
+      Eigen::Transform<double,3,Eigen::Affine> positionTransform(quat quat_in, vec3 pos_in);
     
       // timing
       ros::Time prevStampImu_;

@@ -6,6 +6,7 @@ int main(int argc, char *argv[])
   ros::NodeHandle nh;
   ros::NodeHandle pnh("~");
   mekf::MessageHandler node(nh, pnh);
+  mekf::MEKF mekf();
   ros::spin();
   return 0;
 }

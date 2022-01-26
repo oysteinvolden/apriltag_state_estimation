@@ -43,7 +43,7 @@ namespace mekf{
 
         // TODO: tune Qd and Rd 
 
-        // initialize process weights
+        // initialize process weights - v, acc_bias, w, gyro_bias
         Qd.diagonal() << 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.001, 0.001, 0.001;
 
         // initialize measurement weights
@@ -422,9 +422,6 @@ namespace mekf{
     }
 
     
-    // TODO: if we fuse measurements in imu frame, transform measurements to center of vehicle here
-
-
 
     quat MEKF::getQuat(){
         return state_.quat_nominal;

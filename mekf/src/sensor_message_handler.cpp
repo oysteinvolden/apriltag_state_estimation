@@ -1,5 +1,14 @@
 #include <mekf/sensor_message_handler.h>
 
+// libraries for file streams
+#include <iostream>
+#include <fstream>
+#include <sstream>
+
+// text files to log sbg data
+const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws2/logging/2021-11-09-13-58-55/mekf/mekf_apriltag.txt";
+std::ofstream log_mekfApriltag(path_log_mekfApriltag);
+
 
 namespace mekf{
 
@@ -126,6 +135,7 @@ namespace mekf{
             prevStampImu_ = imuMsg->header.stamp;
         
         }
+
     }
 
 
@@ -229,7 +239,7 @@ namespace mekf{
 
         float yaw_offset, yaw_offset_1, yaw_offset_2;
         yaw_offset_1 = 227*(M_PI/180);
-        yaw_offset_2 = 1.5*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
+        yaw_offset_2 = 2.5*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
         yaw_offset = yaw_offset_1 + yaw_offset_2;
 
 
@@ -318,9 +328,19 @@ namespace mekf{
 
         
         // get mekf results
-        const quat e2g = mekf_.getQuat();
-        const vec3 position = mekf_.getPosition();
-        const vec3 velocity = mekf_.getVelocity();
+        quat e2g = mekf_.getQuat();
+        vec3 position = mekf_.getPosition();
+        vec3 velocity = mekf_.getVelocity();
+
+
+
+        // transform position from imu to center of vehicle
+        Eigen::Transform<double,3,Eigen::Affine> T_centre_vehicle = positionTransform(e2g, position);
+
+        position[0] = T_centre_vehicle.translation().x();
+        position[1] = T_centre_vehicle.translation().y();
+        position[2] = T_centre_vehicle.translation().z();
+
 
         static size_t trace_id_ = 0;
         std_msgs::Header header;
@@ -328,11 +348,15 @@ namespace mekf{
         header.seq = trace_id_++;
 
         // we use imu time to compare with rosbags
-        // use ros::Time::now() in real-time applications
+        // TODO: use ros::Time::now() in real-time applications?
+        // or imu time + processing delay
         
         //ros::Time imu_time(mekf_.getImuTime()); 
         //header.stamp = imu_time; 
         header.stamp = ros::Time::now();
+
+        // for logging, TODO: fix later
+        uint64_t time_stamp_imu = mekf_.getImuTime();
 
         nav_msgs::Odometry odom;
         odom.header = header;
@@ -348,7 +372,66 @@ namespace mekf{
         odom.pose.pose.orientation.z = e2g.z();
 
         pubEstimatedPose_.publish(odom);
+
+
+
+        // convert quat to euler, TODO: use quat2euler instead?
+        geometry_msgs::Quaternion quat_msg;
+
+        quat_msg.x = e2g.x();
+	    quat_msg.y = e2g.y();
+	    quat_msg.z = e2g.z();
+	    quat_msg.w = e2g.w();
+
+	    // quat -> tf
+	    tf::Quaternion quat_estimated;
+	    tf::quaternionMsgToTF(quat_msg, quat_estimated);
+
+        double roll_est, pitch_est, yaw_est;
+        tf::Matrix3x3(quat_estimated).getRPY(roll_est, pitch_est, yaw_est); 
+
+
+         // write results to text file
+        log_mekfApriltag << std::fixed;
+        log_mekfApriltag << std::setprecision(16);
+        log_mekfApriltag << header.seq << " " << time_stamp_imu*10e-7 << " " << position[0] << " " << position[1] << " " << position[2] << " " << yaw_est << std::endl;
+
+        if(trace_id_ > 7500){
+            log_mekfApriltag.close();
+        }
         
+    }
+
+
+    // TODO: check that transforms are correct
+
+    // * Move estimated position from imu to center of vehicle after fusion *
+    // * we assume we are in NED frame already *
+    Eigen::Transform<double,3,Eigen::Affine> MessageHandler::positionTransform(quat q_in, vec3 pos_in){
+
+        // Part 0: Compose into a Eigen Transform
+        Eigen::Quaternion<double> R(q_in.w(), q_in.x(), q_in.y(), q_in.z());
+        Eigen::Translation<double,3> t(pos_in.x(), pos_in.y(), pos_in.z()); // Obs: check sign
+        Eigen::Transform<double,3,Eigen::Affine> T(t*R); 
+
+        // PART 1: inverse -> position is expressed relative to IMU frame (instead of NED frame) %%%
+        Eigen::Transform<double,3,Eigen::Affine> T_inv = T.inverse(); 
+ 
+        // PART 2: Position offset from IMU to left cam in IMU frame (given by ZED API) (no rotation)
+        T_inv.translation().x() = T_inv.translation().x() - 0.002;
+        T_inv.translation().y() = T_inv.translation().y() + 0.023;
+        T_inv.translation().z() = T_inv.translation().z() + 0.002;
+
+        // Part 3: Position offset from left cam to centre of vehicle in left cam frame (no rotation)
+        T_inv.translation().x() = T_inv.translation().x() - 0.033;
+        T_inv.translation().y() = T_inv.translation().y() - 0.06;
+        T_inv.translation().z() = T_inv.translation().z() - 0.3115;
+
+        // Part 4: Inverse -> finally, position is expressed relative to NED frame (instead of body frame) 
+        Eigen::Transform<double,3,Eigen::Affine> T_inv_inv = T_inv.inverse(); 
+
+
+        return T_inv_inv; 
     }
 
 

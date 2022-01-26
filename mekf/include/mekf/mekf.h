@@ -14,17 +14,13 @@
 
 
 
-
-
-
-
 namespace mekf{
 
     class MEKF{
 
         public:
 
-            static constexpr int k_num_states_ = 15; 
+            static constexpr int k_num_states_ = 15; // not 16 since we parametrize unit quaternion with three parameters (error state)
 
             MEKF();
 

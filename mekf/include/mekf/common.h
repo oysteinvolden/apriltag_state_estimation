@@ -10,6 +10,9 @@
 #include <cmath>
 #include <math.h>
 
+
+
+
 namespace mekf{
 
 
@@ -198,9 +201,10 @@ namespace mekf{
         vec3 tmp = vec / theta;
         return from_axis_angle(tmp, theta);
     }
-    
 
-    }
+
+
+}
 
 
 
