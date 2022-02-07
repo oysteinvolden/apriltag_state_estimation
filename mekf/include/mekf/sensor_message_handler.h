@@ -8,6 +8,11 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 
+// ROS sync
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+
 // Eigen
 #include <Eigen/Eigen>
 #include <Eigen/Geometry>
@@ -18,6 +23,11 @@
 
 #include <mekf/mekf.h>
 
+// SBG
+#include <mekf/sbg_driver/SbgImuData.h>
+#include <mekf/sbg_driver/SbgEkfNav.h>
+#include <mekf/sbg_driver/SbgEkfQuat.h>
+#include <mekf/sbg_driver/SbgEkfEuler.h>
 
 
 
@@ -28,7 +38,7 @@ namespace mekf {
   
     public:
       
-      static constexpr int publish_rate_ = 100; 
+      static constexpr int publish_rate_ = 25; // TODO: normally 100
       
       MessageHandler(const ros::NodeHandle& nh, const ros::NodeHandle& pnh); 
 
@@ -44,24 +54,29 @@ namespace mekf {
       // subscribers
       ros::Subscriber subImu_;
       ros::Subscriber subCameraPose_;
+      ros::Subscriber subEkfNav_;
+      ros::Subscriber subEkfEuler_;
 
       // callbacks
-      void imuCallback(const sensor_msgs::ImuConstPtr&);
-      void cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr&);
+      void imuCallback(const sbg_driver::SbgImuDataConstPtr& imuMsg);
+      void cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& camMsg);
+      //void sbgEkfCallback(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg, const sbg_driver::SbgEkfEulerConstPtr& eulerSbgMsg);
+      void ekfNavCallback(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg); 
+      void ekfEulerCallback(const sbg_driver::SbgEkfEulerConstPtr& eulerSbgMsg); 
 
-      // IMU transforms
-      sensor_msgs::Imu imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T);
-      Eigen::Transform<double,3,Eigen::Affine> getImuToBodyT();
 
       // Camera pose transforms  
       geometry_msgs::PoseWithCovarianceStamped cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn);  
 
-      // Move estimated position from imu to center of vehicle after fusion
-      Eigen::Transform<double,3,Eigen::Affine> positionTransform(quat quat_in, vec3 pos_in);
+      // convert from WGS-84 to NED (MSS toolbox)
+      vec3 ll2flat(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg);
     
       // timing
       ros::Time prevStampImu_;
       ros::Time prevStampCameraPose_;
+      //ros::Time prevStampSbg_; 
+      ros::Time prevStampSbgEkfNav_;
+      ros::Time prevStampSbgEkfEuler_;
       ros::Timer pubTimer_;
 
       mekf::MEKF mekf_;

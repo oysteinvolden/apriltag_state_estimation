@@ -1,5 +1,14 @@
 #include <mekf/mekf.h>
 
+// libraries for file streams
+#include <iostream>
+#include <fstream>
+#include <sstream>
+
+// log apriltag data
+const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-27-57/apriltag/apriltag_pose.txt";
+std::ofstream log_apriltagPose(path_log_apriltagPose);
+
 
 namespace mekf{
 
@@ -27,6 +36,29 @@ namespace mekf{
             cameraPoseSample camera_pose_sample_init = {};
             camPoseBuffer_.push(camera_pose_sample_init);
         }
+
+        /*
+        // allocate INS pose buffer
+        sbgPoseBuffer_.allocate(sbg_buffer_length_);
+        for (int i = 0; i < sbg_buffer_length_; i++) {
+            sbgPoseSample sbg_pose_sample_init = {};
+            sbgPoseBuffer_.push(sbg_pose_sample_init);
+        }
+        */
+
+       // allocate INS pos buffer
+        sbgPosBuffer_.allocate(sbg_pos_buffer_length_);
+        for (int i = 0; i < sbg_pos_buffer_length_; i++) {
+            sbgPosSample sbg_pos_sample_init = {};
+            sbgPosBuffer_.push(sbg_pos_sample_init);
+        }
+
+        // allocate INS quat buffer
+        sbgQuatBuffer_.allocate(sbg_quat_buffer_length_);
+        for (int i = 0; i < sbg_quat_buffer_length_; i++) {
+            sbgQuatSample sbg_quat_sample_init = {};
+            sbgQuatBuffer_.push(sbg_quat_sample_init);
+        }
         
         // set to false, so we can initialize
         filter_initialised_ = false;
@@ -43,16 +75,45 @@ namespace mekf{
 
         // TODO: tune Qd and Rd 
 
-        // initialize process weights - v, acc_bias, w, gyro_bias
-        Qd.diagonal() << 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.001, 0.001, 0.001;
+        double sigma_w_ars = 0.0000436332; // angular random walk
+        double sigma_b_ars = 2.54616639*10e-7; // angular in run instability bias 
+        double sigma_w_acc = 0.00057; // velocity random walk
+        double sigma_b_acc = 3.23603*10e-6; // velocity in run instability bias
+
+        double Ts = 0.04;// sample frequency;
+
+        // initialize process weights - v, acc_bias, w, gyro_bias (v, acc_bias, w, ars_bias)
+        /*
+        Qd.diagonal() << sigma_w_acc, sigma_w_acc, sigma_w_acc,
+         sigma_b_acc, sigma_b_acc, sigma_b_acc,
+         sigma_w_ars, sigma_w_ars, sigma_w_ars,
+         sigma_b_ars, sigma_b_ars, sigma_b_ars;
+        */
+        //Qd = Ts * Qd; 
+
+        
+        Qd.diagonal() << 0.01, 0.01, 0.01,
+         0.01, 0.01, 0.01,
+         0.01, 0.01, 0.01,
+         0.01, 0.01, 0.01;
+        
+
+        /*
+        Qd.diagonal() << 0.01, 0.01, 0.01,
+         0.01, 0.01, 0.01,
+         0.1, 0.1, 0.1,
+         0.001, 0.001, 0.001;
+        */
 
         // initialize measurement weights
         Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.1; // p - acc - psi
+        
+        //Rd.diagonal() << 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5; // p - acc - psi
 
         return true;
     }
 
-
+    
     void MEKF::updateCamPose(const vec3& cam_pos, const quat& cam_quat, uint64_t time_usec){
 
         // copy required data
@@ -69,6 +130,148 @@ namespace mekf{
         camPoseBuffer_.push(cam_pose_sample_new_); 
 
     }
+    
+
+
+    void MEKF::updateSbgPos(const vec3& sbg_pos, uint64_t time_usec){
+
+        // copy required data
+        sbg_pos_sample_new_.posNED = sbg_pos;
+        sbg_pos_sample_new_.time_us = time_usec; // TODO: do we need to subtract delay here?
+
+        // update last time
+        time_last_sbg_pos_ = time_usec;
+
+        // push pose to buffer
+        sbgPosBuffer_.push(sbg_pos_sample_new_); 
+
+    }
+
+    void MEKF::updateSbgQuat(const quat& sbg_quat, uint64_t time_usec){
+
+        // copy required data
+        sbg_quat_sample_new_.quatNED = sbg_quat;
+        sbg_quat_sample_new_.time_us = time_usec; // TODO: do we need to subtract delay here?
+
+        // update last time
+        time_last_sbg_quat_ = time_usec;
+
+        // push pose to buffer
+        sbgQuatBuffer_.push(sbg_quat_sample_new_); 
+
+    }
+
+
+    /*
+    void MEKF::updateSbgPose(const vec3& sbg_pos, const quat& sbg_quat, uint64_t time_usec){
+
+        // copy required data
+        sbg_pose_sample_new_.posNED = sbg_pos;
+        sbg_pose_sample_new_.quatNED = sbg_quat;
+        sbg_pose_sample_new_.posErr = 0.05; // TODO: check later
+        sbg_pose_sample_new_.angErr = 0.05; // TODO: check later
+        sbg_pose_sample_new_.time_us = time_usec; // TODO: do we need to subtract delay here?
+
+        // update last time
+        time_last_sbg_pose_ = time_usec;
+
+        // push pose to buffer
+        sbgPoseBuffer_.push(sbg_pose_sample_new_); 
+
+    }
+    */
+
+
+    // Navigation management 
+    // * Decide if we use SBG INS or camera pose based on
+    // * 1) Euclidean distance from reference marker (i.e., origo in NED)
+    // * 2) Camera pose accuracy
+    // * 3) Consistently camera measurements over time
+
+    
+    void MEKF::runNavigationManagement(){
+
+        // get latest SBG INS sample
+        sbgPosSample sbg_pos_newest = sbgPosBuffer_.get_newest();
+        sbgQuatSample sbg_quat_newest = sbgQuatBuffer_.get_newest();
+        vec3 sbg_pos = sbg_pos_newest.posNED;
+        quat sbg_quat = sbg_quat_newest.quatNED;
+
+        // get latest camera pose sample
+        cameraPoseSample cam_pose_newest = camPoseBuffer_.get_newest(); 
+        vec3 cam_pos = cam_pose_newest.posNED;
+        quat cam_quat = cam_pose_newest.quatNED;
+
+        // get timestamps
+        /*
+        uint64_t time_sbg_pos = sbg_pos_newest.time_us;
+        uint64_t time_sbg_quat = sbg_quat_newest.time_us;
+        uint64_t time_cam_pose = cam_pose_newest.time_us;
+        */
+
+        // quaternion to euler angles
+        geometry_msgs::Quaternion cam_quat_msg, sbg_quat_msg;
+
+        sbg_quat_msg.x = sbg_quat.x();
+	    sbg_quat_msg.y = sbg_quat.y();
+	    sbg_quat_msg.z = sbg_quat.z();
+	    sbg_quat_msg.w = sbg_quat.w();
+
+        cam_quat_msg.x = cam_quat.x();
+	    cam_quat_msg.y = cam_quat.y();
+	    cam_quat_msg.z = cam_quat.z();
+	    cam_quat_msg.w = cam_quat.w();
+
+        
+	    tf::Quaternion tf_quat_sbg, tf_quat_cam;
+	    tf::quaternionMsgToTF(cam_quat_msg, tf_quat_cam);
+        tf::quaternionMsgToTF(sbg_quat_msg, tf_quat_sbg);
+
+
+        double roll_sbg, pitch_sbg, yaw_sbg, roll_cam, pitch_cam, yaw_cam;
+        tf::Matrix3x3(tf_quat_sbg).getRPY(roll_sbg, pitch_sbg, yaw_sbg); 
+        tf::Matrix3x3(tf_quat_cam).getRPY(roll_cam, pitch_cam, yaw_cam); 
+
+
+        std::cout << "x pos error: " << abs(sbg_pos.x() - cam_pos.x()) << std::endl;
+        std::cout << "y pos error: " << abs(sbg_pos.y() - cam_pos.y()) << std::endl;
+        std::cout << "yaw error: " << abs(yaw_sbg - yaw_cam)*(180/M_PI) << std::endl;
+
+
+        
+
+        // 1. Are we inside the 2D euclidean distance region and do we use the SBG INS?
+        if((sqrt(pow(sbg_pos.x(),2) + pow(sbg_pos.y(),2)) < euclidean_thresh_) && use_sbg_ins == true){
+            
+            // 2. Check if yaw/pos threshold is satisfied (we use SBG INS as ground truth)
+            if( (abs(sbg_pos.x() - cam_pos.x()) <  x_pos_thresh_) && (abs(sbg_pos.y() - cam_pos.y()) <  y_pos_thresh_) && (abs(yaw_sbg - yaw_cam) < yaw_thresh_) ){
+               
+                // TODO: use moving average instead?
+
+                // 3. Check for consistently measurements over time
+
+                // increment counter
+                accepted_cam_measurements_++;
+
+                // if more than X consecutive camera pose measurements satisfies (2), we use camera pose instead of SBG INS 
+                if(accepted_cam_measurements_ >= consecutive_cam_meas_thresh_){
+                    use_sbg_ins = false; // once set to false, we are finished and feed camera pose into the INS 
+                    ROS_INFO("We use Camera Pose measurements now");
+                }
+                
+            }
+            else
+            {
+                // reset counter (since we require X consecutive camera pose measurements satisfying (2))
+                accepted_cam_measurements_ = 0;
+            }
+            
+        }
+
+
+
+    }
+    
 
 
 
@@ -144,6 +347,7 @@ namespace mekf{
         vec3 f_ins = imu_sample_delayed_.delta_vel - acc_bias_ins; 
         vec3 w_ins = imu_sample_delayed_.delta_ang - gyro_bias_ins;
 
+        
 
         // * Discrete-time KF matrices *
 
@@ -277,6 +481,13 @@ namespace mekf{
         // -> return true
         cam_pose_ready_ = camPoseBuffer_.pop_first_older_than(imu_sample_delayed_.time_us, &cam_pose_delayed_); 
 
+
+        // We only run navigation management when a camera pose is available
+        if(cam_pose_ready_){
+            runNavigationManagement(); 
+        }
+        
+
    
         // no camera pose measurements available (no aiding)
         if(!cam_pose_ready_){
@@ -296,33 +507,83 @@ namespace mekf{
             IKC.setZero(15,15); // TODO: initialize before?
             IKC = I15 - K * Cd;
 
-            // extract latest camera pose measurements
-            cameraPoseSample cam_pose_newest = camPoseBuffer_.get_newest(); 
-            vec3 y_pos = cam_pose_newest.posNED;
-            
-            
-            quat cam_quat = cam_pose_newest.quatNED; 
-            
-            // position are extracted directly while orientation are converted from quat to euler, TODO: use quat2euler instead?
-            geometry_msgs::Quaternion quat_msg;
+    
+            // if camera pose measurements is available but not accurate enough yet
+            if(use_sbg_ins){
 
-	        quat_msg.x = cam_quat.x();
-	        quat_msg.y = cam_quat.y();
-	        quat_msg.z = cam_quat.z();
-	        quat_msg.w = cam_quat.w();
+                std::cout << "We use SBG POSE" << std::endl;
 
-	        // quat -> tf
-	        tf::Quaternion quat2;
-	        tf::quaternionMsgToTF(quat_msg, quat2);
+                // extract latest SBG ins measurements
+                sbgPosSample sbg_pos_newest = sbgPosBuffer_.get_newest();
+                sbgQuatSample sbg_quat_newest = sbgQuatBuffer_.get_newest();
+                y_pos = sbg_pos_newest.posNED;
+                y_quat = sbg_quat_newest.quatNED;
 
-            double roll, pitch, yaw;
-            tf::Matrix3x3(quat2).getRPY(roll, pitch, yaw); 
-            
-            double y_psi = yaw;
-            
+                // position are extracted directly while orientation are converted from quat to euler, TODO: use quat2euler instead?
+                geometry_msgs::Quaternion quat_msg;
+
+                quat_msg.x = y_quat.x();
+                quat_msg.y = y_quat.y();
+                quat_msg.z = y_quat.z();
+                quat_msg.w = y_quat.w();
+
+                // quat -> tf
+                tf::Quaternion quatTf;
+                tf::quaternionMsgToTF(quat_msg, quatTf);
+
+                double roll, pitch, yaw;
+                tf::Matrix3x3(quatTf).getRPY(roll, pitch, yaw); 
+                
+                y_psi = yaw;
+            }
+
+            // if camera pose measurements is accurate enough
+            else{
+
+                std::cout << "We use CAM POSE" << std::endl;
+
+                // extract latest camera pose measurements
+                cameraPoseSample cam_pose_newest = camPoseBuffer_.get_newest(); 
+                y_pos = cam_pose_newest.posNED;
+                y_quat = cam_pose_newest.quatNED; 
+
+                // position are extracted directly while orientation are converted from quat to euler, TODO: use quat2euler instead?
+                geometry_msgs::Quaternion quat_msg;
+
+                quat_msg.x = y_quat.x();
+                quat_msg.y = y_quat.y();
+                quat_msg.z = y_quat.z();
+                quat_msg.w = y_quat.w();
+
+                // quat -> tf
+                tf::Quaternion quatTf;
+                tf::quaternionMsgToTF(quat_msg, quatTf);
+
+                double roll, pitch, yaw;
+                tf::Matrix3x3(quatTf).getRPY(roll, pitch, yaw); 
+                
+                y_psi = yaw;
+            }
+
                         
             std::cout << "y_pos: " << std::endl;
             std::cout << y_pos << std::endl;
+
+
+            // *** log apriltag data ***
+
+            int trace_id = 0;
+
+            log_apriltagPose << std::fixed;
+            log_apriltagPose << std::setprecision(16);
+            log_apriltagPose << ++trace_id << " " << time_us*10e-7 << " " << y_pos.x() << " " << y_pos.y() << " " << y_pos.z() << " " << y_psi <<  std::endl;
+
+            if(trace_id > 750){
+                log_apriltagPose.close();
+            }
+
+            // ************************************
+
 
             // estimation error
             vec3 v1 = -f_ins/g; // gravity vector
@@ -422,6 +683,9 @@ namespace mekf{
     }
 
     
+    // TODO: if we fuse measurements in imu frame, transform measurements to center of vehicle here
+
+
 
     quat MEKF::getQuat(){
         return state_.quat_nominal;
@@ -438,6 +702,7 @@ namespace mekf{
     uint64_t MEKF::getImuTime(){
         return time_last_imu_; 
     }
+
 
 
 

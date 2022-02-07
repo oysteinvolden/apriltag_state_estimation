@@ -54,6 +54,28 @@ namespace mekf{
         uint64_t time_us;  // timestamp of the measurement [micro seconds]
     };
 
+    /*
+    struct sbgPoseSample {
+        vec3 posNED;       // measured NED body position relative to the local origin [m]
+        quat quatNED;      // measured quaternion orientation defining rotation from NED to body frame
+        double posErr;     // 1-Sigma spherical position accuracy [m]
+        double angErr;     // 1-Sigma angular error [rad]
+        uint64_t time_us;  // timestamp of the measurement [micro seconds]
+    };
+    */
+
+    struct sbgPosSample {
+        vec3 posNED;       // measured NED body position relative to the local origin [m]
+        uint64_t time_us;  // timestamp of the measurement [micro seconds]
+    };
+
+    struct sbgQuatSample {
+        quat quatNED;      // measured quaternion orientation defining rotation from NED to body frame
+        uint64_t time_us;  // timestamp of the measurement [micro seconds]
+    };
+
+
+
 
     // skew-symmetric matrix (MSS toolbox)
     inline mat3 Smtrx(vec3 a){
@@ -87,6 +109,22 @@ namespace mekf{
         return vec3(phi,theta,psi);
 
     }
+
+    // euler to quat (Eigen implementation)
+    inline quat euler2q(vec3 euler_angles){
+
+        quat q;
+
+        // TODO: correct order?
+        q = Eigen::AngleAxis<double>(euler_angles.x(), Eigen::Vector3d::UnitX())
+        * Eigen::AngleAxis<double>(euler_angles.y(), Eigen::Vector3d::UnitY())
+        * Eigen::AngleAxis<double>(euler_angles.z(), Eigen::Vector3d::UnitZ());
+
+        return q;
+
+    }
+
+
 
     // cross product
     inline vec3 cross(vec3 a, vec3 b){
