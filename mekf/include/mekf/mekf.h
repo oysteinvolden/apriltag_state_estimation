@@ -101,7 +101,7 @@ namespace mekf{
             uint64_t current_cam_pose_time = {0}; // used to check if fresh cam pose is available
 
             // sampling constants
-            const double f_s  = 100; // sampling frequency [Hz]
+            const double f_s  = 25; // sampling frequency [Hz] // TODO: do this more configurable, one common place to set frequency
             const double h = 1/f_s; // sampling time [s]
 
             // sensors delay
@@ -118,9 +118,14 @@ namespace mekf{
             vec3 g_n;
             double gravity(double lattitude);
 
+            
+
             // Bias time constants (user specified)
             const double T_acc = 1000; 
             const double T_gyro = 1000; 
+
+            //const double T_acc = 10000; //TODO: check this!!
+            //const double T_gyro = 10000; 
 
             // Covariance and predictor
             Eigen::Matrix<double, k_num_states_, k_num_states_> P_prd, P_hat; 
@@ -128,7 +133,7 @@ namespace mekf{
             // TODO: add k_num_states wherever possible for matrices
 
             // process noise weights: v, acc_bias, w, ars_bias
-            Eigen::Matrix<double, 12, 12> Qd;
+            Eigen::Matrix<double, 12, 12> Qd, Q, Q_old; // old = k - 1 time instance
 
             // measurement noise - position aiding + compass 
             Eigen::Matrix<double, 7, 7> Rd;
@@ -146,9 +151,9 @@ namespace mekf{
             Eigen::Matrix<double,3,3> R;
 
             // Discrete-time KF matrices
-            Eigen::Matrix<double, 15, 15> A, Ad;
+            Eigen::Matrix<double, 15, 15> A, Ad, Ad_old; // old = k - 1 time instance
             Eigen::Matrix<double, 7, 15> Cd;
-            Eigen::Matrix<double, 15, 12> Ed;
+            Eigen::Matrix<double, 15, 12> Ed, Ed_old; // old = k - 1 time instance
 
             // kalman gain
             Eigen::Matrix<double, 15, 7> K;

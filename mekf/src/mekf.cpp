@@ -75,41 +75,72 @@ namespace mekf{
 
         // TODO: tune Qd and Rd 
 
-        double sigma_w_ars = 0.0000436332; // angular random walk
-        double sigma_b_ars = 2.54616639*10e-7; // angular in run instability bias 
+        // SBG imu data
         double sigma_w_acc = 0.00057; // velocity random walk
         double sigma_b_acc = 3.23603*10e-6; // velocity in run instability bias
+        double sigma_w_ars = 0.0000436332; // angular random walk
+        double sigma_b_ars = 2.54616639*10e-7; // angular in run instability bias 
+        
+
+        // Torleiv ex slides
+        /*
+        double sigma_w_acc = 0.00116666; // velocity random walk
+        double sigma_b_acc = 0.00001155724; // velocity in run instability bias
+        double sigma_w_ars = 0.0000436332; // angular random walk (OK)
+        double sigma_b_ars = 1.81869028*10e-8; // angular in run instability bias 
+        */
 
         double Ts = 0.04;// sample frequency;
 
         // initialize process weights - v, acc_bias, w, gyro_bias (v, acc_bias, w, ars_bias)
-        /*
-        Qd.diagonal() << sigma_w_acc, sigma_w_acc, sigma_w_acc,
-         sigma_b_acc, sigma_b_acc, sigma_b_acc,
+        
+        
+        Qd.diagonal() << 0.5*sigma_w_acc, 0.5*sigma_w_acc, 0.5*sigma_w_acc,
+         0.5*sigma_b_acc, 0.5*sigma_b_acc, 0.5*sigma_b_acc,
          sigma_w_ars, sigma_w_ars, sigma_w_ars,
          sigma_b_ars, sigma_b_ars, sigma_b_ars;
-        */
-        //Qd = Ts * Qd; 
+        
+        Qd = 2 * Ts * Qd; 
+        
 
+        //Qd = 100 * Qd;
         
-        Qd.diagonal() << 0.01, 0.01, 0.01,
-         0.01, 0.01, 0.01,
-         0.01, 0.01, 0.01,
-         0.01, 0.01, 0.01;
-        
+
+        /*
+        Qd.diagonal() << 0.0001, 0.0001, 0.0001,
+         0.00001, 0.00001, 0.00001,
+         0.0001, 0.0001, 0.0001,
+         0.0001, 0.0001, 0.0001;
+        */
 
         /*
         Qd.diagonal() << 0.01, 0.01, 0.01,
          0.01, 0.01, 0.01,
          0.1, 0.1, 0.1,
-         0.001, 0.001, 0.001;
+         0.1, 0.1, 0.1;
         */
 
-        // initialize measurement weights
-        Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.1; // p - acc - psi
+        //Qd = 0.1 * Qd;
         
-        //Rd.diagonal() << 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5; // p - acc - psi
 
+        // initialize measurement weights
+        //Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.01; // p - acc - psi
+
+        // TODO: dynamic R based on euclidean distance / number of detected markers - or drop it since we init with SBG?
+        
+        Rd.diagonal() << 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001; // p - acc - psi
+
+        //Rd.diagonal() << 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_ars; 
+
+
+
+        // initialize k-1 matrices (used in Tustin method)
+        //Ed_old.setZero(15,12);
+        //Ad_old.setIdentity(15,15); // TODO: zero?
+        //Q_old = Q; // TODO: zero?
+
+        //Qd.setZero(12,12);
+        
         return true;
     }
 
@@ -280,8 +311,12 @@ namespace mekf{
         // TODO: use measured delta time dt or fixed sampling time? Should be consistent at least
 
         // copy imu data
-        imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle [rad]
-        imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()) * dt; // current delta velocity [m/s]
+        //imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle [rad]
+        //imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()) * dt; // current delta velocity [m/s]
+
+        imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()); // current delta angle [rad]
+        imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()); // current delta velocity [m/s]
+
         imu_sample_new_.delta_ang_dt = dt;
         imu_sample_new_.delta_vel_dt = dt;
         imu_sample_new_.time_us = time_us;
@@ -293,8 +328,6 @@ namespace mekf{
 
   
         // get the oldest data from the buffer
-
-        // TODO: use get_oldest when the rest works
         imu_sample_delayed_ = imuBuffer_.get_oldest(); // TODO: neccessary or can we use imu_sample_new directly?
         //imu_sample_delayed_ = imuBuffer_.get_newest();
 
@@ -324,7 +357,6 @@ namespace mekf{
         quat q_ins = state_.quat_nominal;
         vec3 gyro_bias_ins = state_.gyro_bias;
 
-
         // % WGS-84 gravity model
         g = gravity(mu);
         g_n << 0, 0, g;
@@ -342,6 +374,7 @@ namespace mekf{
         // Rotation matrix 
         //q_ins.normalize(); // TODO: Do we need to normalize here?
         R = q_ins.toRotationMatrix(); 
+
 
         // Bias compensated IMU measurements
         vec3 f_ins = imu_sample_delayed_.delta_vel - acc_bias_ins; 
@@ -377,17 +410,20 @@ namespace mekf{
         A.block(9,3,3,3) = O3;
         A.block(9,6,3,3) = O3;
         A.block(9,9,3,3) = -Smtrx(w_ins);
-        A.block(9,12,3,3) = O3;
+        A.block(9,12,3,3) = -I3; // TODO: update in all versions!
+        //A.block(9,12,3,3) = O3;
 
         A.block(12,0,3,3) = O3;
         A.block(12,3,3,3) = O3;
         A.block(12,6,3,3) = O3;
-        A.block(12,9,3,3) = O3;
+        A.block(12,9,3,3) = O3; 
         A.block(12,12,3,3) = -(1/T_gyro)*I3;
 
    
 
-        Ad =  I15 + h*A + 0.5*(h*A)*(h*A);   
+        Ad =  I15 + h*A + 0.5*(h*A)*(h*A); 
+        //Ad =  I15 + h*A;   
+      
 
 
         // linearization of heading measurement
@@ -404,6 +440,7 @@ namespace mekf{
                        4*( pow(a.z(),2) + a.x()*a.y()*a.z() + pow(a.x(),2) - pow(a.y(),2) + 4 ));
 
 
+        //std::cout << "c psi: " << c_psi << std::endl;
 
         // We asssume no velocity meausurements available 
 
@@ -425,7 +462,6 @@ namespace mekf{
         Cd.block(6,0,1,9) = O_19; 
         Cd.block(6,9,1,3) = c_psi.transpose();
         Cd.block(6,12,1,3) = O_13;
-
         
         Ed.block(0,0,3,3) = O3;
         Ed.block(0,3,3,3) = O3;
@@ -452,6 +488,30 @@ namespace mekf{
         Ed.block(12,6,3,3) = O3;
         Ed.block(12,9,3,3) = I3;
 
+
+        // %%%%% Discretize process covariance matrix using Tustin / trapeziodal integration
+        
+        //Qd = 0.5*h*(Ad_old*Ed_old*Q_old*Ed_old.transpose()*Ad_old.transpose());
+        
+        //Ed_old.setZero(15,12);
+        //Ad_old.setIdentity(15,15); // TODO: zero?
+        //Q_old = Q; // TODO: zero?
+
+        //Qd = Ed.transpose()*Qd*Ed;
+
+        //Ed * Qd * Ed.transpose()
+
+        //Qd = Q;
+
+        //Ed * Qd * Ed.transpose();
+
+        /*
+        // update old (k-1) matrices before next iteration
+        Ed_old = Ed;
+        Ad_old = Ad;
+        Q_old = Q_old;
+        */
+        // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
         
@@ -503,6 +563,13 @@ namespace mekf{
 
             // KF gain
             K = P_prd * Cd.transpose() * (Cd * P_prd * Cd.transpose() + Rd).inverse(); 
+
+            //std::cout << "P prd: " << P_prd << std::endl;
+            //std::cout << "outer: " << P_prd * Cd.transpose() << std::endl;
+            //std::cout << "inner: " << Cd * P_prd * Cd.transpose() + Rd << std::endl;
+            //std::cout << "Cd: " << Cd << std::endl;
+            //std::cout << "Rd: " << Rd << std::endl;
+
 
             IKC.setZero(15,15); // TODO: initialize before?
             IKC = I15 - K * Cd;
@@ -590,7 +657,7 @@ namespace mekf{
             v1 = v1 / sqrt( v1.transpose() * v1 );
 
             vec3 eps_pos = y_pos - p_ins;
-            vec3 eps_g   = v1 - R.transpose() * v01; 
+            vec3 eps_g = v1 - R.transpose() * v01; 
 
 
             std::cout << "y psi: " << y_psi*(180/M_PI) << std::endl;
@@ -603,9 +670,12 @@ namespace mekf{
             eps.block(3,0,3,1) = eps_g;
             eps(6,0) = eps_psi;
 
+
             // corrector
             delta_x_hat = K * eps;
             P_hat = IKC * P_prd * IKC.transpose() + K * Rd * K.transpose();
+
+            //std::cout << "K: " << K << std::endl;
 
             // error quaternion (2 x Gibbs vector)
             vec3 delta_a = delta_x_hat.block(9,0,3,1);
@@ -617,6 +687,14 @@ namespace mekf{
 	        v_ins = v_ins + delta_x_hat.block(3,0,3,1);			         // velocity
 	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(6,0,3,1);    // acc bias
 	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(12,0,3,1); // gyro bias
+
+            //std::cout << " delta acc bias: " << delta_x_hat.block(6,0,3,1) << std::endl;
+            //std::cout << " delta gyro bias: " << delta_x_hat.block(12,0,3,1) << std::endl;
+
+
+            //std::cout << std::fixed;
+            //std::cout << std::setprecision(16);
+            //std::cout << "gyro bias:" << gyro_bias_ins << std::endl;
             
             q_ins = quatprod(q_ins, delta_q_hat);                        // schur product   
             q_ins.normalize();                                           // normalization
@@ -627,12 +705,17 @@ namespace mekf{
         // predictor
         P_prd = Ad * P_hat * Ad.transpose() + Ed * Qd * Ed.transpose();
 
+        //std::cout << "Ad: " << Ad << std::endl;
+
 
         // INS propagation: x_ins[k+1]
         vec3 a_ins = R * f_ins + g_n;                                                          // linear acceleration
         p_ins = p_ins + h * v_ins + pow(h,2)/2 * a_ins;                                        // exact discretization
         v_ins = v_ins + h * a_ins;                                                             // exact discretization        
-        vec4 q_ins_vec = Tquat(w_ins*h).exp() * vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()); // exact discretization
+        
+        vec4 q_ins_vec = Tquat_vec3(w_ins*h).exp() * vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()); // exact discretization
+        //vec4 q_ins_vec = vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()) + h*Tquat_quat(q_ins) * w_ins; // Euler'e method (alternative)
+
         q_ins = quat(q_ins_vec(0),q_ins_vec(1),q_ins_vec(2),q_ins_vec(3));                     // vec4 to quat 
         q_ins.normalize();                                                                     // normalization
 
@@ -642,6 +725,9 @@ namespace mekf{
         state_.accel_bias = acc_bias_ins;
         state_.quat_nominal = q_ins;
         state_.gyro_bias = gyro_bias_ins;
+
+        //std::cout << "acc bias: " << acc_bias_ins << std::endl;
+        //std::cout << "gyro bias: " << gyro_bias_ins << std::endl;
 
         
         std::cout << "estimated pos: " << std::endl;

@@ -22,6 +22,7 @@ namespace mekf{
     typedef Eigen::Quaternion<double> quat;    // Member of S4   
     typedef Eigen::Matrix<double, 3, 3> mat3;  // Matrix in R3
     typedef Eigen::Matrix<double, 4, 4> mat4;   // Matrix in R3
+    typedef Eigen::Matrix<double, 4, 3> mat43;   // 4x3 Matrix 
    
     // State vector:
     // * Attitude quaternion
@@ -150,9 +151,8 @@ namespace mekf{
     
     // Tw = Tquat(w) computes the quaternion transformation matrix Tw of
     // dimension 4 x 4 for attitude such that q_dot = Tw * q
-    // (MSS toolbox)
-    
-    inline mat4 Tquat(vec3 u){
+    // (MSS toolbox)    
+    inline mat4 Tquat_vec3(vec3 u){
 
         // assume angular rates of dimension 3 is used
         vec3 w = vec3(u.x(),u.y(),u.z());
@@ -162,6 +162,34 @@ namespace mekf{
         T.block(0,1,1,3) = -w.transpose();
         T.block(1,0,3,1) = w;
         T.block(1,1,3,3) = -Smtrx(w);
+
+        return 0.5*T;
+    }
+
+    // Tq = Tquat(q) computes the quaternion transformation matrix Tq of 
+    // dimension 4 x 3 for attitude such that q_dot = Tq * w 
+    // (MSS toolbox)
+    inline mat43 Tquat_quat(quat q){
+
+        double eta = q.w();
+        vec3 eps = vec3(q.x(),q.y(),q.z());
+
+        mat43 T;
+        T(0,0) = -eps.x();
+        T(0,1) = -eps.y();
+        T(0,2) = -eps.z();
+
+        T(1,0) = eta;
+        T(1,1) = -eps.z();
+        T(1,2) = -eps.y();
+
+        T(2,0) = eps.z();
+        T(2,1) = eta;
+        T(2,2) = -eps.x();
+
+        T(3,0) = -eps.y();
+        T(3,1) = -eps.x();
+        T(3,2) = eta;
 
         return 0.5*T;
     }

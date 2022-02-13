@@ -90,15 +90,13 @@ namespace mekf{
             // delta time
             double dt = (imuMsg->header.stamp - prevStampImu_).toSec(); // TODO: only neccessary if we don't use fixed sampling time (h)
 
-            //std::cout << "dt: " << dt << std::endl;
-
 
             // get measurements
             vec3 ang_vel = vec3(imuMsg->gyro.x, imuMsg->gyro.y, imuMsg->gyro.z);
             vec3 lin_acc = vec3(imuMsg->accel.x, imuMsg->accel.y, imuMsg->accel.z);
 
-
-            // TODO: check that 1e6f make sense
+            //std::cout << "ang vel: " << ang_vel << std::endl;
+            //std::cout << "lin acc: " << lin_acc << std::endl;
 
             // run kalman filter
             mekf_.run_mekf(ang_vel, lin_acc, static_cast<uint64_t>(imuMsg->header.stamp.toSec()*1e6f), dt);
@@ -211,7 +209,7 @@ namespace mekf{
 
         float yaw_offset, yaw_offset_1, yaw_offset_2;
         yaw_offset_1 = 227*(M_PI/180);
-        yaw_offset_2 = 2*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
+        yaw_offset_2 = 1.5*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
         yaw_offset = yaw_offset_1 + yaw_offset_2;
 
 
@@ -397,6 +395,9 @@ namespace mekf{
 
 
     void MessageHandler::publishState(const ros::TimerEvent&){
+
+
+        // TODO: based on flag, use sbg directly or estimated state. We only use estimated state when its initialized
 
         
         // get mekf results
