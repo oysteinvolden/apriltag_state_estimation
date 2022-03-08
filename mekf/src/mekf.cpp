@@ -6,7 +6,11 @@
 #include <sstream>
 
 // log apriltag data
-const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-27-57/apriltag/apriltag_pose.txt";
+//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-27-57/apriltag/apriltag_pose.txt";
+//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-25-43/apriltag/apriltag_pose.txt";
+//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-08-14-54-21/apriltag/apriltag_pose.txt";
+const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-13-58-55/apriltag/apriltag_pose.txt";
+//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-29-44/apriltag/apriltag_pose.txt";
 std::ofstream log_apriltagPose(path_log_apriltagPose);
 
 
@@ -14,13 +18,14 @@ namespace mekf{
 
     MEKF::MEKF(){
       
-        // initialize INS
+        // initialize INS - TODO: use specific initialization from SBG?
+        /*
         state_.quat_nominal = quat(1,0,0,0);
         state_.vel = vec3(0,0,0);
         state_.pos = vec3(0,0,0);
         state_.gyro_bias = vec3(0,0,0);
         state_.accel_bias = vec3(0,0,0);
-        
+        */
          
         // allocate imu buffer
         imuBuffer_.allocate(imu_buffer_length_);
@@ -70,16 +75,49 @@ namespace mekf{
 
         // TODO: do we have to initialize more here?
 
+        // TODO: initialize P matrix properly
+
         // initialize covariance
-        P_prd.setIdentity(k_num_states_,k_num_states_);
+        //P_prd.setIdentity(k_num_states_,k_num_states_);
+
+        // TODO: put the squares of the typical values of the the state components + margin
+
+        
+        P_prd.diagonal() << 0.000016, 0.000016, 0.000016, // delta pos in NED [m] 
+                            0.000016, 0.000016, 0.000016, // delta velocity in NED [m/s]
+                            0.000003,   0.000003,   0.000003, // delta acceleration bias [m/s^2]  
+                            0.00000005,  0.00000005,  0.00000005, // delta a 
+                            0.00000025, 0.00000025, 0.00000025; // delta gyro bias [rad]
+
+
+        /*
+        P_prd.diagonal() << 0.06, 0.06, 0.06, // delta pos [m]
+                            0.06, 0.06, 0.06, // delta velocity [m/s]
+                            0.0025, 0.0001, 0.0001, // delta acceleration bias [m/s^2]  
+                            0.0001, 0.0001, 0.0001, // delta a 
+                            0.0001, 0.0001, 0.0001; // delta gyro bias [rad]
+        */
 
         // TODO: tune Qd and Rd 
 
         // SBG imu data
-        double sigma_w_acc = 0.00057; // velocity random walk
-        double sigma_b_acc = 3.23603*10e-6; // velocity in run instability bias
+        
+        /*
+        double sigma_w_acc = 0.00012; // velocity random walk - marine applications
+        double sigma_b_acc = 0.000000693435; //velocity in run instability bias - marine applications
+        //double sigma_w_acc = 0.00057; // velocity random walk
+        //double sigma_b_acc = 3.23603*10e-6; // velocity in run instability bias
+        
         double sigma_w_ars = 0.0000436332; // angular random walk
         double sigma_b_ars = 2.54616639*10e-7; // angular in run instability bias 
+        */
+
+        // ADIS imu data
+        
+        double sigma_w_acc = 0.0001333; // velocity random walk
+        double sigma_b_acc = 8.3212184588*10e-7; // velocity in run instability bias
+        double sigma_w_ars = 0.000026179938; // angular random walk
+        double sigma_b_ars = 6.54728501*10e-8; // angular in run instability bias 
         
 
         // Torleiv ex slides
@@ -90,21 +128,33 @@ namespace mekf{
         double sigma_b_ars = 1.81869028*10e-8; // angular in run instability bias 
         */
 
-        double Ts = 0.04;// sample frequency;
+        //double Ts = 0.004;// sample frequency; ** TODO **
 
         // initialize process weights - v, acc_bias, w, gyro_bias (v, acc_bias, w, ars_bias)
         
         
-        Qd.diagonal() << 0.5*sigma_w_acc, 0.5*sigma_w_acc, 0.5*sigma_w_acc,
-         0.5*sigma_b_acc, 0.5*sigma_b_acc, 0.5*sigma_b_acc,
+        Qd.diagonal() << sigma_w_acc, sigma_w_acc, sigma_w_acc,
+         sigma_b_acc, sigma_b_acc, sigma_b_acc,
          sigma_w_ars, sigma_w_ars, sigma_w_ars,
          sigma_b_ars, sigma_b_ars, sigma_b_ars;
         
-        Qd = 2 * Ts * Qd; 
-        
 
-        //Qd = 100 * Qd;
+        //Qd = h * Qd; 
+        //Qd = 0.1*(1/pow(h,2))*Qd; //this one work
         
+        //Qd = h * Qd; // this one works
+
+        //Qd = (1/pow(h,2))*Qd;
+
+        //Qd = (1/h)*Qd;
+
+
+        //Qd = 2 * h * Qd;
+        
+        Qd = 3 * h * Qd;
+
+
+        //std::cout << "Q: " << Qd << std::endl;
 
         /*
         Qd.diagonal() << 0.0001, 0.0001, 0.0001,
@@ -117,22 +167,80 @@ namespace mekf{
         Qd.diagonal() << 0.01, 0.01, 0.01,
          0.01, 0.01, 0.01,
          0.1, 0.1, 0.1,
-         0.1, 0.1, 0.1;
-        */
-
-        //Qd = 0.1 * Qd;
+         0.001, 0.001, 0.001;
         
 
+        Qd = 2 * h * Qd;
+        */
+
         // initialize measurement weights
-        //Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.01; // p - acc - psi
+        //Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.01; // 0.00001 // p - acc - psi 
+
+
+        //Rd.diagonal() << 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001; // p - acc - psi
 
         // TODO: dynamic R based on euclidean distance / number of detected markers - or drop it since we init with SBG?
         
-        Rd.diagonal() << 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001; // p - acc - psi
+   
+         // ok
+        /*
+        Rd.diagonal() << 0.00001, 0.00001, 0.00001, // p
+                         0.00001, 0.00001, 0.00001, // acc
+                         0.000001;       // psi
+        */     
+                    
+        //Rd.diagonal() << 0.00001, 0.00001, 0.00001, // p
+        //                0.00001, 0.00001, 0.00001, // acc
+        //                 0.000001;       // psi
+        
+
+        /*
+        Rd.diagonal() << 0.00012, 0.0012, 0.0012, // p
+                         0.00012, 0.0012, 0.0012, // acc
+                         0.0001;       // psi
+                   
+        Rd = 0.1*Rd;
+        */
+
+         // this one is good
+        
+        
+        Rd.diagonal() << 0.001, 0.001, 0.001, // p
+                         0.001, 0.001, 0.001, // acc
+                         0.0001;       // psi                 
+        
+        Rd = 0.001*Rd; // adis imu
+        
+        //Rd = 0.01*Rd; // sbg imu - dark
+        //Rd = 0.0001*Rd; // sbg imu 
+
+
+         // use this one for 14-21-45
+
+        /* 
+        Rd.diagonal() << 0.0011, 0.0011, 0.0011, // p
+                         0.0011, 0.0011, 0.0011, // acc
+                         0.0007;       // psi    
+        
+
+        Rd = 2 * h * Rd;
+        */
+
+        /*
+        Rd.diagonal() << 0.0012, 0.0012, 0.0012, // p
+                         0.0012, 0.0012, 0.0012, // acc
+                         0.007;       // psi
+        */
+
+        //Rd = 0.001*Rd;
+        
+
+        //Rd = h*Rd;
+
 
         //Rd.diagonal() << 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_ars; 
 
-
+        //Rd = 0.1*Rd;
 
         // initialize k-1 matrices (used in Tustin method)
         //Ed_old.setZero(15,12);
@@ -140,8 +248,44 @@ namespace mekf{
         //Q_old = Q; // TODO: zero?
 
         //Qd.setZero(12,12);
+
+        // TEST
+        sbg_meas_counter = 0;
+
+        cam_test_meas_ = 0;
+
+
+        // %%%%% initialize state %%%%
+
+        // extract SBG pos sample
+        sbgPosSample sbg_pos_newest = sbgPosBuffer_.get_newest();
+        y_pos = sbg_pos_newest.posNED;
         
-        return true;
+        
+        // check is SBG sample has arrived
+        if(y_pos.x() == 0){
+            return false;
+        }
+        else
+        {
+            // extract sbg quat
+            sbgQuatSample sbg_quat_newest = sbgQuatBuffer_.get_newest();
+            y_quat = sbg_quat_newest.quatNED;
+
+            //y_quat.normalize();
+
+            state_.quat_nominal = y_quat;
+            state_.vel = vec3(0,0,0); // TODO: extract from SBG NAV?
+            state_.pos = y_pos;
+            state_.gyro_bias = vec3(0,0,0); // 
+            state_.accel_bias = vec3(0,0,0);
+
+            return true;
+        }
+        
+
+        
+        //return true;
     }
 
     
@@ -299,6 +443,33 @@ namespace mekf{
             
         }
 
+        /*
+        // 1. Are we inside the 2D euclidean distance region and do we not use the SBG INS?
+        if((sqrt(pow(sbg_pos.x(),2) + pow(sbg_pos.y(),2)) < euclidean_thresh_) && use_sbg_ins == false){
+            
+            // 2. Check if yaw/pos threshold is satisfied (we use SBG INS as ground truth)
+            if( (abs(sbg_pos.x() - cam_pos.x()) >  x_pos_thresh_) && (abs(sbg_pos.y() - cam_pos.y()) >  y_pos_thresh_) && (abs(yaw_sbg - yaw_cam) > yaw_thresh_) ){
+               
+                // increment counter
+                declined_cam_measurements_++;
+
+                                // if more than X consecutive camera pose measurements satisfies (2), we use camera pose instead of SBG INS 
+                if(declined_cam_measurements_ >= consecutive_cam_meas_thresh_ + 5){
+                    use_sbg_ins = true; // once set to false, we are finished and feed camera pose into the INS 
+                    ROS_INFO("We use Camera Pose measurements now");
+                }
+                else
+                {
+                    declined_cam_measurements_ = 0;
+                }
+                
+
+               
+            }
+            
+        }
+        */
+
 
 
     }
@@ -314,8 +485,8 @@ namespace mekf{
         //imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle [rad]
         //imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()) * dt; // current delta velocity [m/s]
 
-        imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()); // current delta angle [rad]
-        imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()); // current delta velocity [m/s]
+        imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()); // current yaw rate [rad/s] // TODO: change name
+        imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()); // current linear acceleration [m/s^2]
 
         imu_sample_new_.delta_ang_dt = dt;
         imu_sample_new_.delta_vel_dt = dt;
@@ -374,7 +545,6 @@ namespace mekf{
         // Rotation matrix 
         //q_ins.normalize(); // TODO: Do we need to normalize here?
         R = q_ins.toRotationMatrix(); 
-
 
         // Bias compensated IMU measurements
         vec3 f_ins = imu_sample_delayed_.delta_vel - acc_bias_ins; 
@@ -489,6 +659,9 @@ namespace mekf{
         Ed.block(12,9,3,3) = I3;
 
 
+        // TODO: test and update all versions!!!!
+        Ed = h * Ed;
+
         // %%%%% Discretize process covariance matrix using Tustin / trapeziodal integration
         
         //Qd = 0.5*h*(Ad_old*Ed_old*Q_old*Ed_old.transpose()*Ad_old.transpose());
@@ -539,25 +712,96 @@ namespace mekf{
         // -> pop first cam pose with timestamp older than imu timestamp
         // -> remove old data in buffer (set tail to the item that comes after the one we removed)
         // -> return true
+        
         cam_pose_ready_ = camPoseBuffer_.pop_first_older_than(imu_sample_delayed_.time_us, &cam_pose_delayed_); 
 
+        //sbg_ready_ = sbgPosBuffer_.pop_first_older_than(imu_sample_delayed_.time_us, &sbg_pos_delayed_); 
+
+       
+        //std::cout << "sbg ready: " << sbg_ready_ << std::endl;
+
+        /*
+        if(sbg_ready_){
+            cam_test_meas_ ++;
+
+        }
+        std::cout << "cam test: " << cam_test_meas_ << std::endl;
+        */
 
         // We only run navigation management when a camera pose is available
+        
+        
         if(cam_pose_ready_){
+
+            //cam_test_meas_ ++;
+
             runNavigationManagement(); 
         }
         
+        
+        //std::cout << "cam test: " << cam_test_meas_ << std::endl;
+        
+        
 
-   
+       
         // no camera pose measurements available (no aiding)
+        
+        
         if(!cam_pose_ready_){
 
             P_hat = P_prd;
 
         }
+        
+        
+
+        //use_sbg_ins = true;        
+
+        /*
+        if(!sbg_ready_){
+
+            P_hat = P_prd;
+
+        }
+        */
+        
+        
+        
+
+        /*
+        sbg_meas_counter++;
+
+        std::cout << "counter: " << sbg_meas_counter << std::endl;
+
+        if(sbg_meas_counter > 0 && sbg_meas_counter < 1000){ // 18250 - 19500
+            std::cout << "DEAD RECKNONING" << std::endl;
+
+            // estimated bias
+            
+            //state_.accel_bias = vec3(-0.0545154, 0.22331, -0.0213926);
+            //state_.gyro_bias = vec3(2.54561e-5, 0.000397449, -0.000460659);
+            //acc_bias_ins = state_.accel_bias;
+            //gyro_bias_ins = state_.gyro_bias;
+            
+
+            use_sbg_ins = false;
+        }
+        else
+        {
+            use_sbg_ins = true;
+        }
+        */
+        
+        
+        
+        
+        
+        //if(sbg_ready_ == true || cam_pose_ready_ == true){
+        //if(sbg_ready_ == true || use_sbg_ins == true){
 
         // camera pose measurements available (INS aiding)
         else{
+        //if(sbg_ready_ == true && use_sbg_ins == true){
 
             K.setZero(15,7); // TODO: initialize before?
 
@@ -573,6 +817,8 @@ namespace mekf{
 
             IKC.setZero(15,15); // TODO: initialize before?
             IKC = I15 - K * Cd;
+
+            //std::cout << "use sbg ins: " << use_sbg_ins << std::endl;
 
     
             // if camera pose measurements is available but not accurate enough yet
@@ -605,6 +851,7 @@ namespace mekf{
             }
 
             // if camera pose measurements is accurate enough
+            //else if(!sbg_ready_){ // TODO: fix this logic when using cam pose again
             else{
 
                 std::cout << "We use CAM POSE" << std::endl;
@@ -645,7 +892,7 @@ namespace mekf{
             log_apriltagPose << std::setprecision(16);
             log_apriltagPose << ++trace_id << " " << time_us*10e-7 << " " << y_pos.x() << " " << y_pos.y() << " " << y_pos.z() << " " << y_psi <<  std::endl;
 
-            if(trace_id > 750){
+            if(trace_id > 7500){
                 log_apriltagPose.close();
             }
 
@@ -665,10 +912,13 @@ namespace mekf{
             // smallest signed angle
             double eps_psi = ssa(y_psi - atan(u)); // (in radians)
 
+
             // we assume no velocity measurements here
             eps.block(0,0,3,1) = eps_pos;
             eps.block(3,0,3,1) = eps_g;
             eps(6,0) = eps_psi;
+
+            //std::cout << "eps: " << eps << std::endl;
 
 
             // corrector
@@ -688,9 +938,13 @@ namespace mekf{
 	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(6,0,3,1);    // acc bias
 	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(12,0,3,1); // gyro bias
 
-            //std::cout << " delta acc bias: " << delta_x_hat.block(6,0,3,1) << std::endl;
-            //std::cout << " delta gyro bias: " << delta_x_hat.block(12,0,3,1) << std::endl;
 
+            //std::cout << "delta a: " << delta_a << std::endl;            
+
+            /*
+            std::cout << " delta acc bias: " << delta_x_hat.block(6,0,3,1) << std::endl;
+            std::cout << " delta gyro bias: " << delta_x_hat.block(12,0,3,1) << std::endl;
+            */
 
             //std::cout << std::fixed;
             //std::cout << std::setprecision(16);
@@ -705,16 +959,24 @@ namespace mekf{
         // predictor
         P_prd = Ad * P_hat * Ad.transpose() + Ed * Qd * Ed.transpose();
 
-        //std::cout << "Ad: " << Ad << std::endl;
+        //std::cout << "P_prd: " << P_prd << std::endl;
 
 
         // INS propagation: x_ins[k+1]
         vec3 a_ins = R * f_ins + g_n;                                                          // linear acceleration
+
         p_ins = p_ins + h * v_ins + pow(h,2)/2 * a_ins;                                        // exact discretization
-        v_ins = v_ins + h * a_ins;                                                             // exact discretization        
+
+        //p_ins = p_ins + h * v_ins;
+
+        v_ins = v_ins + h * a_ins;                                                             // exact discretization 
+
+        //std::cout << "T quat w ins 1: "  << (h*Tquat_vec3(w_ins)).exp() << std::endl;   
+
+        //std::cout << "T quat w ins 2: "  << (Tquat_vec3(w_ins)*h).exp() << std::endl;   
         
-        vec4 q_ins_vec = Tquat_vec3(w_ins*h).exp() * vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()); // exact discretization
-        //vec4 q_ins_vec = vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()) + h*Tquat_quat(q_ins) * w_ins; // Euler'e method (alternative)
+        vec4 q_ins_vec = (h*Tquat_vec3(w_ins)).exp() * vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()); // exact discretization
+        //vec4 q_ins_vec = vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()) + h*Tquat_quat(q_ins) * w_ins; // Euler's method (alternative)
 
         q_ins = quat(q_ins_vec(0),q_ins_vec(1),q_ins_vec(2),q_ins_vec(3));                     // vec4 to quat 
         q_ins.normalize();                                                                     // normalization
@@ -726,8 +988,8 @@ namespace mekf{
         state_.quat_nominal = q_ins;
         state_.gyro_bias = gyro_bias_ins;
 
-        //std::cout << "acc bias: " << acc_bias_ins << std::endl;
-        //std::cout << "gyro bias: " << gyro_bias_ins << std::endl;
+        std::cout << "acc bias: " << acc_bias_ins << std::endl;
+        std::cout << "gyro bias: " << gyro_bias_ins << std::endl;
 
         
         std::cout << "estimated pos: " << std::endl;

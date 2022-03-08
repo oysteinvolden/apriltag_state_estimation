@@ -38,7 +38,7 @@ namespace mekf {
   
     public:
       
-      static constexpr int publish_rate_ = 25; // TODO: normally 100
+      static constexpr int publish_rate_ = 125; // TODO: check
       
       MessageHandler(const ros::NodeHandle& nh, const ros::NodeHandle& pnh); 
 
@@ -57,8 +57,14 @@ namespace mekf {
       ros::Subscriber subEkfNav_;
       ros::Subscriber subEkfEuler_;
 
+      // IMU transforms
+      sensor_msgs::Imu imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T);
+      Eigen::Transform<double,3,Eigen::Affine> getImuToBodyT();
+
       // callbacks
-      void imuCallback(const sbg_driver::SbgImuDataConstPtr& imuMsg);
+      void imuCallback(const sensor_msgs::ImuConstPtr& imuMsg);
+      //void imuCallback(const sbg_driver::SbgImuDataConstPtr& imuMsg);
+  
       void cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& camMsg);
       //void sbgEkfCallback(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg, const sbg_driver::SbgEkfEulerConstPtr& eulerSbgMsg);
       void ekfNavCallback(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg); 

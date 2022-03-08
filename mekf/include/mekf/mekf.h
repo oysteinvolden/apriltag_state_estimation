@@ -70,7 +70,11 @@ namespace mekf{
             imuSample imu_sample_delayed_ {};	// captures the imu sample on the delayed time horizon
             cameraPoseSample cam_pose_delayed_ {}; // captures the cam pose sample on the delayed time horizon
             //sbgPoseSample sbg_pose_sample_delayed_ {}; // captures the SBG sample on the delayed time horizon 
+            sbgPosSample sbg_pos_delayed_ {};
             // TODO: delayed sbg?
+
+            // TEST
+            int sbg_meas_counter;
 
 
             // navigation management (decide which navigation sensor to use)
@@ -78,18 +82,25 @@ namespace mekf{
             bool use_sbg_ins = true; // if false, we use camera pose instead. NB! We always initalize with SBG INS
 
             // threshold used to decide if we use INS or camera pose measurements
-            double x_pos_thresh_ = 1; // [m]
-            double y_pos_thresh_ = 1; // [m]
-            double yaw_thresh_ = 2*(M_PI/180); // [rad]
+            double x_pos_thresh_ = 0.5; // [m]
+            double y_pos_thresh_ = 0.5; // [m]
+            //double x_pos_thresh_ = 0.8; // [m]
+            //double y_pos_thresh_ = 0.8; // [m]
+
+            double yaw_thresh_ = 1*(M_PI/180); // [rad]
             double euclidean_thresh_ = 30; // [m] 
                    
 
             int accepted_cam_measurements_ = 0; // count the number of accepted cam pose measurement
             int consecutive_cam_meas_thresh_ = 5; // The number of consecutive cam measurements we require before we use cam pose
 
+            int declined_cam_measurements_ = 0; // count number of declined cam measurements
+
+            int cam_test_meas_ = 0;
 
             // flags on received updates
             bool cam_pose_ready_ = false;
+            bool sbg_ready_ = false;
 
             // timing
             uint64_t time_last_cam_pose_ {0};
@@ -101,7 +112,7 @@ namespace mekf{
             uint64_t current_cam_pose_time = {0}; // used to check if fresh cam pose is available
 
             // sampling constants
-            const double f_s  = 25; // sampling frequency [Hz] // TODO: do this more configurable, one common place to set frequency
+            const double f_s  = 50; // sampling frequency [Hz] // TODO: do this more configurable, one common place to set frequency
             const double h = 1/f_s; // sampling time [s]
 
             // sensors delay
@@ -124,8 +135,8 @@ namespace mekf{
             const double T_acc = 1000; 
             const double T_gyro = 1000; 
 
-            //const double T_acc = 10000; //TODO: check this!!
-            //const double T_gyro = 10000; 
+            //const double T_acc = 100; // TODO: check this!!
+            //const double T_gyro = 100; 
 
             // Covariance and predictor
             Eigen::Matrix<double, k_num_states_, k_num_states_> P_prd, P_hat; 

@@ -181,14 +181,14 @@ namespace mekf{
 
         T(1,0) = eta;
         T(1,1) = -eps.z();
-        T(1,2) = -eps.y();
+        T(1,2) = eps.y(); // TODO: correct this in all versions!
 
         T(2,0) = eps.z();
         T(2,1) = eta;
         T(2,2) = -eps.x();
 
         T(3,0) = -eps.y();
-        T(3,1) = -eps.x();
+        T(3,1) = eps.x(); // TODO: correct this in all versions!
         T(3,2) = eta;
 
         return 0.5*T;
@@ -218,18 +218,25 @@ namespace mekf{
   
 
     // Matrix exponential
-    
-    //inline mat4 expm(mat4 X){
+    /*
+    inline mat4 expm(mat4 X){
 
         // extract eigenvalues/eigenvectors
-        /*
+        
         Eigen::EigenSolver<Eigen::Matrix4d> es(X);
         Eigen::MatrixXcd D = es.eigenvalues();
         Eigen::MatrixXcd V = es.eigenvectors();
-        */
+
+        //return V*((D.diagonal().exp()).diagonal())/(V);
+
+        D = D.diagonal().exp().diagonal();
+
+        return V * (D) / V ;
+        
  
-    //    return X.exp(); // return matrix exponential
-    //}
+        //return X.exp(); // return matrix exponential
+    }
+    */
     
 
       

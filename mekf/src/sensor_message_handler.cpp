@@ -7,7 +7,10 @@
 
 // text files to log sbg data
 //const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-27-57/mekf/mekf_apriltag.txt";
-const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-25-43/mekf/mekf_apriltag.txt";
+//const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-25-43/mekf/mekf_apriltag.txt";
+//const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws3/logging/2021-11-08-14-54-21/mekf/mekf_apriltag.txt";
+const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-13-58-55/mekf/mekf_apriltag.txt";
+//const char *path_log_mekfApriltag="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-29-44/mekf/mekf_apriltag.txt";
 std::ofstream log_mekfApriltag(path_log_mekfApriltag);
 
 
@@ -19,7 +22,8 @@ namespace mekf{
 
         ROS_INFO("Subscribing to IMU");
 
-        subImu_ = nh_.subscribe("/sbg/imu_data", 1, &MessageHandler::imuCallback, this);
+        //subImu_ = nh_.subscribe("/sbg/imu_data", 1, &MessageHandler::imuCallback, this); // SBG IMU
+        subImu_ = nh_.subscribe("/adis_imu", 10, &MessageHandler::imuCallback, this); // ADIS IMU
         
         ROS_INFO("Subscribing to camera pose");
         
@@ -30,10 +34,10 @@ namespace mekf{
         // *** SBG ***
 
         // SBG EKF NAV
-        subEkfNav_ = nh_.subscribe("/sbg/ekf_nav", 1, &MessageHandler::ekfNavCallback, this);
+        subEkfNav_ = nh_.subscribe("/sbg/ekf_nav", 10, &MessageHandler::ekfNavCallback, this);
 
         // SBG EKF Euler
-        subEkfEuler_ = nh_.subscribe("/sbg/ekf_euler", 1, &MessageHandler::ekfEulerCallback, this);
+        subEkfEuler_ = nh_.subscribe("/sbg/ekf_euler", 10, &MessageHandler::ekfEulerCallback, this);
         
         
         
@@ -61,6 +65,45 @@ namespace mekf{
     // -------------------------------------------------
 
 
+    // Rotate IMU to align with body frame
+    Eigen::Transform<double,3,Eigen::Affine> MessageHandler::getImuToBodyT(){
+
+        // %%%% from IMU to body %%%%
+
+        // roll, pitch, yaw - order: about X Y Z respectively 
+        double roll=0, pitch=0, yaw=M_PI;
+        Eigen::Quaternion<double> R_imu_to_body;
+        R_imu_to_body = Eigen::AngleAxis<double>(yaw, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxis<double>(pitch, Eigen::Vector3d::UnitY()) * Eigen::AngleAxis<double>(roll, Eigen::Vector3d::UnitX());
+        Eigen::Transform<double,3,Eigen::Affine> T_imu_to_body(R_imu_to_body);
+
+        return T_imu_to_body; 
+    }
+    
+
+    
+    // OBS! we only transform linear acceleration and angular velocity
+    sensor_msgs::Imu MessageHandler::imuTransform(const sensor_msgs::ImuConstPtr &imu_in, const Eigen::Transform<double,3,Eigen::Affine> &T){
+
+        // copy header
+        sensor_msgs::Imu imu_out;
+        imu_out.header = imu_in->header;
+
+        // angular velocity
+        Eigen::Vector3d vel = T * Eigen::Vector3d(imu_in->angular_velocity.x, imu_in->angular_velocity.y, imu_in->angular_velocity.z);
+
+        imu_out.angular_velocity.x = vel.x();
+        imu_out.angular_velocity.y = vel.y();
+        imu_out.angular_velocity.z = vel.z();
+
+        // linear acceleration
+        Eigen::Vector3d acc = T * Eigen::Vector3d(imu_in->linear_acceleration.x, imu_in->linear_acceleration.y, imu_in->linear_acceleration.z);
+
+        imu_out.linear_acceleration.x = acc.x();
+        imu_out.linear_acceleration.y = acc.y();
+        imu_out.linear_acceleration.z = acc.z();
+
+        return imu_out; 
+    }
 
 
     
@@ -73,7 +116,61 @@ namespace mekf{
     // ------------------------------
 
 
+    // EDIT: we use ADIS imu instead of SBG imu
+    
+    void MessageHandler::imuCallback(const sensor_msgs::ImuConstPtr& imuMsg){
+
+        // ADIS imu run on 250 Hz -> downsample to 125 Hz
+
+        if((imuMsg->header.seq%5) == 0){
+
+            if(prevStampImu_.sec > 0){
+
+                    
+                if(!init_){
+                        init_ = true;
+                        ROS_INFO("Initialized MEKF");
+                }   
+                
+                // delta time
+                double dt = (imuMsg->header.stamp - prevStampImu_).toSec(); // TODO: only neccessary if we don't use fixed sampling time (h)
+
+                
+                // imu to body transformation
+                Eigen::Transform<double,3,Eigen::Affine> imuToBodyT = getImuToBodyT();
+    
+                // transform imu data to body frame
+                sensor_msgs::Imu imuInBody = imuTransform(imuMsg, imuToBodyT);
+
+                // get measurements
+                vec3 ang_vel = vec3(imuInBody.angular_velocity.x, imuInBody.angular_velocity.y, imuInBody.angular_velocity.z);
+                vec3 lin_acc = vec3(imuInBody.linear_acceleration.x, imuInBody.linear_acceleration.y, imuInBody.linear_acceleration.z);
+                
+
+                //vec3 ang_vel = vec3(imuMsg->angular_velocity.x, imuMsg->angular_velocity.y, imuMsg->angular_velocity.z);
+                //vec3 lin_acc = vec3(imuMsg->linear_acceleration.x, imuMsg->linear_acceleration.y, imuMsg->linear_acceleration.z);
+
+
+                //std::cout << "ang vel: " << ang_vel << std::endl;
+                //std::cout << "lin acc: " << std::endl;
+                //std::cout << lin_acc << std::endl;
+
+                // run kalman filter
+                mekf_.run_mekf(ang_vel, lin_acc, static_cast<uint64_t>(imuMsg->header.stamp.toSec()*1e6f), dt);
+
+            
+            }
+
+            prevStampImu_ = imuMsg->header.stamp;
+        }
+
+    }
+    
+    
+
+
     // EDIT: custom sbg imu instead of ROS imu
+    /*
     void MessageHandler::imuCallback(const sbg_driver::SbgImuDataConstPtr& imuMsg){
 
         // SBG imu data run 25 Hz, potentially 100 hz
@@ -107,6 +204,8 @@ namespace mekf{
         prevStampImu_ = imuMsg->header.stamp;
 
     }
+    */
+    
 
 
 
@@ -138,10 +237,23 @@ namespace mekf{
         // Measured offsets between camera and center of vehicle (in camera frame):
         // x = 0.06 m, y = 0.3115 m, z = 0.033 m 
    
-        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - 0.06;
-        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115;
-        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - 0.033; 
+        // left camera (default)
+        /*
+        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - (0.06); // TODO: check
+        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115; 
+        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - (0.033); // TODO:check 
+        */
 
+        // right camera (experiment 2 - rain)
+        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x + (0.06); // right camera
+        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115; 
+        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - (0.033); 
+
+        /*
+        pose.pose.pose.position.x = cameraPoseIn->pose.pose.position.x - (0.06 + 0.15); // TODO: check
+        pose.pose.pose.position.y = cameraPoseIn->pose.pose.position.y - 0.3115; 
+        pose.pose.pose.position.z = cameraPoseIn->pose.pose.position.z - (0.033 + 0.07); // TODO:check 
+        */
         
         // no rotation yet
         pose.pose.pose.orientation.x = cameraPoseIn->pose.pose.orientation.x;
@@ -209,7 +321,8 @@ namespace mekf{
 
         float yaw_offset, yaw_offset_1, yaw_offset_2;
         yaw_offset_1 = 227*(M_PI/180);
-        yaw_offset_2 = 1.5*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
+        //yaw_offset_2 = 1.5*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
+        yaw_offset_2 = 1*(M_PI/180); // TODO: configure for step 1: , step 2: , step 3:  
         yaw_offset = yaw_offset_1 + yaw_offset_2;
 
 
@@ -300,6 +413,7 @@ namespace mekf{
             vec3 sbgPosNED = ll2flat(navSbgMsg);
             vec3 sbg_pos = vec3(sbgPosNED.y(), sbgPosNED.x(), sbgPosNED.z()); // TODO: check this - order of x and y
 
+            //std::cout << "sbg pos: " << sbg_pos << std::endl;
 
             // update sample
             mekf_.updateSbgPos(sbg_pos, static_cast<uint64_t>(navSbgMsg->header.stamp.toSec()*1e6f));
@@ -316,6 +430,8 @@ namespace mekf{
             // convert from euler to quat
             vec3 sbg_euler = vec3(eulerSbgMsg->angle.x, eulerSbgMsg->angle.y, eulerSbgMsg->angle.z);
             quat sbg_quat = euler2q(sbg_euler);
+
+            //std::cout << "sbg quat: " << sbg_quat.w() << " " << sbg_quat.x() << " " << sbg_quat.y() << " " << sbg_quat.z() << std::endl;
 
             // update pose sample
             mekf_.updateSbgQuat(sbg_quat, static_cast<uint64_t>(eulerSbgMsg->header.stamp.toSec()*1e6f));
@@ -364,17 +480,62 @@ namespace mekf{
     vec3 MessageHandler::ll2flat(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg){
 
         // reference parameters
-        // TODO: make this more configurable later
         // * step 2 (day 2)
+        
+        /*
         double lat0 = 1.10723534;
         double lon0 = 0.18151399;
         double h0 = 42.08; 
+        */
+
+        // experiment 1
+        // day 1 - step 3
+        
+        /*
+        double lat0 = 1.10723547;
+        double lon0 = 0.18151444;
+        double h0 = 42.98; 
+        */
+
+        //double lat0 = 1.10723554 - 0.00000008;
+        //double lon0 = 0.18151445 - 0.0000001;
+        //double h0 = 42.604;
+
+        // day 2 - step 3
+        //double lat0 = 1.10723554 - 0.000000036;// works for 21-45
+        //double lon0 = 0.18151445 - 0.00000008; // works for 21-45
+        //double h0 = 42.604;
+
+        /*
+        double lat0 = 1.10723554 + 0.00000001; // 51-20 - nja?
+        double lon0 = 0.18151445 - 0.00000003; // 51-20 - nja?
+        double h0 = 42.604;
+        */
+
+        
+        double lat0 = 1.10723554;// works for 48-27 / 51-20
+        double lon0 = 0.18151445; // works for 48-27 51-20
+        double h0 = 42.604;
+        
+
+        //double lat0 = 1.10723554; // works for 2021-11-09-14-55-37
+        //double lon0 = 0.18151445 - 0.00000002; // works for 2021-11-09-14-55-37
+        //double h0 = 42.604;
+        
+
+        // day 1 - step 3 (alternative 2)
+        /*
+        double lat0 = 1.10723554;
+        double lon0 = 0.18151445;
+        double h0 = 42.604; 
+        */
      
         // extract global position
+        
         double lat = (navSbgMsg->position.x)*(M_PI/180); // [rad]
         double lon = (navSbgMsg->position.y)*(M_PI/180); // [rad]
         double h = (navSbgMsg->position.z + navSbgMsg->undulation); // [m] Height above WGS84 Ellipsoid = altitude + undulation
-
+        
 
         // WGS-84 parameters
         double a = 6378137; // Semi-major axis (equitorial radius)
@@ -426,7 +587,7 @@ namespace mekf{
 
         nav_msgs::Odometry odom;
         odom.header = header;
-        odom.pose.pose.position.x = position[0];
+        odom.pose.pose.position.x = position[0]; 
         odom.pose.pose.position.y = position[1];
         odom.pose.pose.position.z = position[2];
         odom.twist.twist.linear.x = velocity[0];
@@ -437,6 +598,47 @@ namespace mekf{
         odom.pose.pose.orientation.y = e2g.y();
         odom.pose.pose.orientation.z = e2g.z();
 
+
+        // %%% inverse %%%
+        /*
+        // pose -> tf
+        tf::Stamped<tf::Transform> tag_transform;
+        tf::poseMsgToTF(odom.pose.pose, tag_transform);
+
+        // tf -> tf inverse
+        tf::Transform tag_transform_inverse;
+        tag_transform_inverse = tag_transform.inverse();
+
+        // tf inverse -> pose inverse
+        geometry_msgs::PoseWithCovarianceStamped odom_inverse;
+        odom_inverse.header = header;
+        tf::poseTFToMsg(tag_transform_inverse, odom_inverse.pose.pose);
+
+
+        // %%% transform -> sbg -> center of vehicle in body frame
+        odom_inverse.pose.pose.position.x = odom_inverse.pose.pose.position.x - 0.07; // TODO: check 
+        odom_inverse.pose.pose.position.y = odom_inverse.pose.pose.position.y - 0.15; // TODO: check
+
+        // %% inverse again %%
+
+        // pose -> tf
+        tf::Stamped<tf::Transform> tag_transform2;
+        tf::poseMsgToTF(odom_inverse.pose.pose, tag_transform2);
+
+        // tf -> tf inverse
+        tf::Transform tag_transform_inverse2;
+        tag_transform_inverse2 = tag_transform2.inverse();
+
+        // tf inverse -> pose inverse
+        geometry_msgs::PoseWithCovarianceStamped odom_recovered;
+        odom_recovered.header = header;
+        tf::poseTFToMsg(tag_transform_inverse2, odom_recovered.pose.pose);
+
+
+        */
+        // %%%%%%%%%%%%%%%%%%%%%%%%
+
+        //pubEstimatedPose_.publish(odom_recovered);
         pubEstimatedPose_.publish(odom);
 
 
@@ -460,9 +662,10 @@ namespace mekf{
         // write results to text file
         log_mekfApriltag << std::fixed;
         log_mekfApriltag << std::setprecision(16);
+        //log_mekfApriltag << header.seq << " " << time_stamp_imu*10e-7 << " " << odom_recovered.pose.pose.position.x << " " << odom_recovered.pose.pose.position.y << " " << odom_recovered.pose.pose.position.z << " " << yaw_est << std::endl;
         log_mekfApriltag << header.seq << " " << time_stamp_imu*10e-7 << " " << position[0] << " " << position[1] << " " << position[2] << " " << yaw_est << std::endl;
 
-        if(trace_id_ > 7500){
+        if(trace_id_ > 24500){
             log_mekfApriltag.close();
         }
         
