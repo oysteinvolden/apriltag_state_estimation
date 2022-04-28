@@ -38,9 +38,10 @@ namespace mekf {
   
     public:
       
-      static constexpr int publish_rate_ = 125; // TODO: check
-      
+      static constexpr int publish_rate_ = 50;
+
       MessageHandler(const ros::NodeHandle& nh, const ros::NodeHandle& pnh); 
+
 
 
     private:
@@ -48,8 +49,15 @@ namespace mekf {
       ros::NodeHandle nh_;
 
       // publisher
-      ros::Publisher pubEstimatedPose_;
-      void publishState(const ros::TimerEvent&);
+      ros::Publisher pubEstimatedNav_;
+      ros::Publisher pubEstimatedEuler_;
+      void publishEstimatedNav(const ros::TimerEvent&);
+      void publishEstimatedEuler(const ros::TimerEvent&);
+
+
+      // counter for seq number published 
+      size_t trace_id_nav_ = 0;
+      size_t trace_id_euler_ = 0;
 
       // subscribers
       ros::Subscriber subImu_;
@@ -63,27 +71,28 @@ namespace mekf {
 
       // callbacks
       void imuCallback(const sensor_msgs::ImuConstPtr& imuMsg);
-      //void imuCallback(const sbg_driver::SbgImuDataConstPtr& imuMsg);
-  
       void cameraPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& camMsg);
-      //void sbgEkfCallback(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg, const sbg_driver::SbgEkfEulerConstPtr& eulerSbgMsg);
       void ekfNavCallback(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg); 
       void ekfEulerCallback(const sbg_driver::SbgEkfEulerConstPtr& eulerSbgMsg); 
-
 
       // Camera pose transforms  
       geometry_msgs::PoseWithCovarianceStamped cameraTransform(const geometry_msgs::PoseWithCovarianceStampedConstPtr& cameraPoseIn);  
 
       // convert from WGS-84 to NED (MSS toolbox)
-      vec3 ll2flat(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg);
+      vec3 llh2flat(const sbg_driver::SbgEkfNavConstPtr& navSbgMsg);
+
+      // convert from NED to WGS-84 (MSS toolbox)
+      vec3 flat2llh(vec3 llh_pos);
     
       // timing
       ros::Time prevStampImu_;
-      ros::Time prevStampCameraPose_;
-      //ros::Time prevStampSbg_; 
+      ros::Time prevStampCameraPose_; 
       ros::Time prevStampSbgEkfNav_;
       ros::Time prevStampSbgEkfEuler_;
-      ros::Timer pubTimer_;
+
+      //ros::Timer pubTimer_;
+      ros::Timer pubTimerNav_; // for create timer
+      ros::Timer pubTimerEuler_; // for create timer
 
       mekf::MEKF mekf_;
 

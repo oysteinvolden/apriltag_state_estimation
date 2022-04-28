@@ -5,27 +5,21 @@
 #include <fstream>
 #include <sstream>
 
-// log apriltag data
-//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-27-57/apriltag/apriltag_pose.txt";
-//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-25-43/apriltag/apriltag_pose.txt";
-//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-08-14-54-21/apriltag/apriltag_pose.txt";
-const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-13-58-55/apriltag/apriltag_pose.txt";
-//const char *path_log_apriltagPose="/home/oysteinvolden/mekf_ws3/logging/2021-11-09-16-29-44/apriltag/apriltag_pose.txt";
-std::ofstream log_apriltagPose(path_log_apriltagPose);
 
 
 namespace mekf{
 
     MEKF::MEKF(){
       
-        // initialize INS - TODO: use specific initialization from SBG?
-        /*
-        state_.quat_nominal = quat(1,0,0,0);
+        // initialize INS - TODO: use specific initialization from SBG?        
+        
+	    state_.quat_nominal = quat(1,0,0,0);
         state_.vel = vec3(0,0,0);
         state_.pos = vec3(0,0,0);
         state_.gyro_bias = vec3(0,0,0);
         state_.accel_bias = vec3(0,0,0);
-        */
+        
+	    
          
         // allocate imu buffer
         imuBuffer_.allocate(imu_buffer_length_);
@@ -42,20 +36,12 @@ namespace mekf{
             camPoseBuffer_.push(camera_pose_sample_init);
         }
 
-        /*
-        // allocate INS pose buffer
-        sbgPoseBuffer_.allocate(sbg_buffer_length_);
-        for (int i = 0; i < sbg_buffer_length_; i++) {
-            sbgPoseSample sbg_pose_sample_init = {};
-            sbgPoseBuffer_.push(sbg_pose_sample_init);
-        }
-        */
 
        // allocate INS pos buffer
-        sbgPosBuffer_.allocate(sbg_pos_buffer_length_);
-        for (int i = 0; i < sbg_pos_buffer_length_; i++) {
-            sbgPosSample sbg_pos_sample_init = {};
-            sbgPosBuffer_.push(sbg_pos_sample_init);
+        sbgNavBuffer_.allocate(sbg_nav_buffer_length_);
+        for (int i = 0; i < sbg_nav_buffer_length_; i++) {
+            sbgNavSample sbg_nav_sample_init = {};
+            sbgNavBuffer_.push(sbg_nav_sample_init);
         }
 
         // allocate INS quat buffer
@@ -68,19 +54,17 @@ namespace mekf{
         // set to false, so we can initialize
         filter_initialised_ = false;
 
+        // set to false until we have a valid MEKF estimate to publish
+        publish_MEKF_ = false;
+
     }
 
 
     bool MEKF::initializeFilter(){
 
-        // TODO: do we have to initialize more here?
+        // *** initializa covariance matrices ***
 
-        // TODO: initialize P matrix properly
-
-        // initialize covariance
-        //P_prd.setIdentity(k_num_states_,k_num_states_);
-
-        // TODO: put the squares of the typical values of the the state components + margin
+        // put the squares of the typical values of the the state components + margin
 
         
         P_prd.diagonal() << 0.000016, 0.000016, 0.000016, // delta pos in NED [m] 
@@ -90,180 +74,40 @@ namespace mekf{
                             0.00000025, 0.00000025, 0.00000025; // delta gyro bias [rad]
 
 
-        /*
-        P_prd.diagonal() << 0.06, 0.06, 0.06, // delta pos [m]
-                            0.06, 0.06, 0.06, // delta velocity [m/s]
-                            0.0025, 0.0001, 0.0001, // delta acceleration bias [m/s^2]  
-                            0.0001, 0.0001, 0.0001, // delta a 
-                            0.0001, 0.0001, 0.0001; // delta gyro bias [rad]
-        */
-
-        // TODO: tune Qd and Rd 
-
-        // SBG imu data
-        
-        /*
-        double sigma_w_acc = 0.00012; // velocity random walk - marine applications
-        double sigma_b_acc = 0.000000693435; //velocity in run instability bias - marine applications
-        //double sigma_w_acc = 0.00057; // velocity random walk
-        //double sigma_b_acc = 3.23603*10e-6; // velocity in run instability bias
-        
-        double sigma_w_ars = 0.0000436332; // angular random walk
-        double sigma_b_ars = 2.54616639*10e-7; // angular in run instability bias 
-        */
-
         // ADIS imu data
-        
+    
         double sigma_w_acc = 0.0001333; // velocity random walk
         double sigma_b_acc = 8.3212184588*10e-7; // velocity in run instability bias
         double sigma_w_ars = 0.000026179938; // angular random walk
         double sigma_b_ars = 6.54728501*10e-8; // angular in run instability bias 
         
 
-        // Torleiv ex slides
-        /*
-        double sigma_w_acc = 0.00116666; // velocity random walk
-        double sigma_b_acc = 0.00001155724; // velocity in run instability bias
-        double sigma_w_ars = 0.0000436332; // angular random walk (OK)
-        double sigma_b_ars = 1.81869028*10e-8; // angular in run instability bias 
-        */
-
-        //double Ts = 0.004;// sample frequency; ** TODO **
-
-        // initialize process weights - v, acc_bias, w, gyro_bias (v, acc_bias, w, ars_bias)
-        
-        
+        // initialize process weights - v, acc_bias, w, gyro_bias (v, acc_bias, w, ars_bias)        
         Qd.diagonal() << sigma_w_acc, sigma_w_acc, sigma_w_acc,
          sigma_b_acc, sigma_b_acc, sigma_b_acc,
          sigma_w_ars, sigma_w_ars, sigma_w_ars,
          sigma_b_ars, sigma_b_ars, sigma_b_ars;
         
+        Qd = 3 * h * Qd; // discretize + margin
 
-        //Qd = h * Qd; 
-        //Qd = 0.1*(1/pow(h,2))*Qd; //this one work
-        
-        //Qd = h * Qd; // this one works
-
-        //Qd = (1/pow(h,2))*Qd;
-
-        //Qd = (1/h)*Qd;
-
-
-        //Qd = 2 * h * Qd;
-        
-        Qd = 3 * h * Qd;
-
-
-        //std::cout << "Q: " << Qd << std::endl;
-
-        /*
-        Qd.diagonal() << 0.0001, 0.0001, 0.0001,
-         0.00001, 0.00001, 0.00001,
-         0.0001, 0.0001, 0.0001,
-         0.0001, 0.0001, 0.0001;
-        */
-
-        /*
-        Qd.diagonal() << 0.01, 0.01, 0.01,
-         0.01, 0.01, 0.01,
-         0.1, 0.1, 0.1,
-         0.001, 0.001, 0.001;
-        
-
-        Qd = 2 * h * Qd;
-        */
-
-        // initialize measurement weights
-        //Rd.diagonal() << 1, 1, 1, 1, 1, 1, 0.01; // 0.00001 // p - acc - psi 
-
-
-        //Rd.diagonal() << 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001; // p - acc - psi
-
-        // TODO: dynamic R based on euclidean distance / number of detected markers - or drop it since we init with SBG?
-        
-   
-         // ok
-        /*
-        Rd.diagonal() << 0.00001, 0.00001, 0.00001, // p
-                         0.00001, 0.00001, 0.00001, // acc
-                         0.000001;       // psi
-        */     
-                    
-        //Rd.diagonal() << 0.00001, 0.00001, 0.00001, // p
-        //                0.00001, 0.00001, 0.00001, // acc
-        //                 0.000001;       // psi
-        
-
-        /*
-        Rd.diagonal() << 0.00012, 0.0012, 0.0012, // p
-                         0.00012, 0.0012, 0.0012, // acc
-                         0.0001;       // psi
-                   
-        Rd = 0.1*Rd;
-        */
-
-         // this one is good
-        
-        
+ 
+        // this one is good
         Rd.diagonal() << 0.001, 0.001, 0.001, // p
                          0.001, 0.001, 0.001, // acc
                          0.0001;       // psi                 
         
         Rd = 0.001*Rd; // adis imu
         
-        //Rd = 0.01*Rd; // sbg imu - dark
-        //Rd = 0.0001*Rd; // sbg imu 
-
-
-         // use this one for 14-21-45
-
-        /* 
-        Rd.diagonal() << 0.0011, 0.0011, 0.0011, // p
-                         0.0011, 0.0011, 0.0011, // acc
-                         0.0007;       // psi    
-        
-
-        Rd = 2 * h * Rd;
-        */
-
-        /*
-        Rd.diagonal() << 0.0012, 0.0012, 0.0012, // p
-                         0.0012, 0.0012, 0.0012, // acc
-                         0.007;       // psi
-        */
-
-        //Rd = 0.001*Rd;
-        
-
-        //Rd = h*Rd;
-
-
-        //Rd.diagonal() << 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_acc, 3*sigma_w_ars; 
-
-        //Rd = 0.1*Rd;
-
-        // initialize k-1 matrices (used in Tustin method)
-        //Ed_old.setZero(15,12);
-        //Ad_old.setIdentity(15,15); // TODO: zero?
-        //Q_old = Q; // TODO: zero?
-
-        //Qd.setZero(12,12);
-
-        // TEST
-        sbg_meas_counter = 0;
-
-        cam_test_meas_ = 0;
-
 
         // %%%%% initialize state %%%%
 
-        // extract SBG pos sample
-        sbgPosSample sbg_pos_newest = sbgPosBuffer_.get_newest();
-        y_pos = sbg_pos_newest.posNED;
-        
-        
-        // check is SBG sample has arrived
-        if(y_pos.x() == 0){
+        // extract SBG nav sample
+        sbgNavSample sbg_nav_newest = sbgNavBuffer_.get_newest();
+        y_pos = sbg_nav_newest.posNED;
+	    y_vel = sbg_nav_newest.vel;
+    
+        // check is SBG sample has arrived - TODO: do another check?
+        if(y_pos.x() == 0 && y_pos.y() == 0 && y_pos.z() == 0){
             return false;
         }
         else
@@ -275,17 +119,15 @@ namespace mekf{
             //y_quat.normalize();
 
             state_.quat_nominal = y_quat;
-            state_.vel = vec3(0,0,0); // TODO: extract from SBG NAV?
+            state_.vel = y_vel; 
             state_.pos = y_pos;
-            state_.gyro_bias = vec3(0,0,0); // 
+            state_.gyro_bias = vec3(0,0,0); 
             state_.accel_bias = vec3(0,0,0);
 
             return true;
         }
-        
+	        
 
-        
-        //return true;
     }
 
     
@@ -294,31 +136,32 @@ namespace mekf{
         // copy required data
         cam_pose_sample_new_.posNED = cam_pos;
         cam_pose_sample_new_.quatNED = cam_quat;
-        cam_pose_sample_new_.posErr = 0.05; // TODO: check later
-        cam_pose_sample_new_.angErr = 0.05; // TODO: check later
+        cam_pose_sample_new_.posErr = 0.05; // TODO: neccessary?
+        cam_pose_sample_new_.angErr = 0.05; // TODO: neccessary?
         cam_pose_sample_new_.time_us = time_usec; // TODO: do we need to subtract camera delay here?
 
         // update last time
         time_last_cam_pose_ = time_usec;
 
         // push pose to buffer
-        camPoseBuffer_.push(cam_pose_sample_new_); 
+        camPoseBuffer_.push(cam_pose_sample_new_);
 
     }
     
 
 
-    void MEKF::updateSbgPos(const vec3& sbg_pos, uint64_t time_usec){
+    void MEKF::updateSbgNav(const vec3& sbg_pos, const vec3& sbg_vel, uint64_t time_usec){
 
         // copy required data
-        sbg_pos_sample_new_.posNED = sbg_pos;
-        sbg_pos_sample_new_.time_us = time_usec; // TODO: do we need to subtract delay here?
+        sbg_nav_sample_new_.posNED = sbg_pos;
+	    sbg_nav_sample_new_.vel = sbg_vel;
+        sbg_nav_sample_new_.time_us = time_usec; // TODO: do we need to subtract delay here?
 
         // update last time
         time_last_sbg_pos_ = time_usec;
 
         // push pose to buffer
-        sbgPosBuffer_.push(sbg_pos_sample_new_); 
+        sbgNavBuffer_.push(sbg_nav_sample_new_); 
 
     }
 
@@ -337,24 +180,80 @@ namespace mekf{
     }
 
 
-    /*
-    void MEKF::updateSbgPose(const vec3& sbg_pos, const quat& sbg_quat, uint64_t time_usec){
+    // check if estimated state is accurate enough to be used in feedback control (i.e., be pulished and used)
+    void MEKF::publish_MEKF(uint64_t time_us){
 
-        // copy required data
-        sbg_pose_sample_new_.posNED = sbg_pos;
-        sbg_pose_sample_new_.quatNED = sbg_quat;
-        sbg_pose_sample_new_.posErr = 0.05; // TODO: check later
-        sbg_pose_sample_new_.angErr = 0.05; // TODO: check later
-        sbg_pose_sample_new_.time_us = time_usec; // TODO: do we need to subtract delay here?
+        
+        // get latest SBG INS sample
+        sbgNavSample sbg_nav_sample = sbgNavBuffer_.get_newest();
+        sbgQuatSample sbg_quat_sample = sbgQuatBuffer_.get_newest();
+        vec3 sbg_pos = sbg_nav_sample.posNED;
+        quat sbg_quat = sbg_quat_sample.quatNED;
 
-        // update last time
-        time_last_sbg_pose_ = time_usec;
+        
+        // get latest MEKF sample
+        quat mekf_quat = getQuat();
+        vec3 mekf_pos = getPosition();
+        //const vec3 velocity = mekf_.getVelocity(); // TODO: assume velocity is ok?
 
-        // push pose to buffer
-        sbgPoseBuffer_.push(sbg_pose_sample_new_); 
+    
+        // quat to euler
+        geometry_msgs::Quaternion mekf_quat_msg, sbg_quat_msg;
+
+        sbg_quat_msg.x = sbg_quat.x();
+	    sbg_quat_msg.y = sbg_quat.y();
+	    sbg_quat_msg.z = sbg_quat.z();
+	    sbg_quat_msg.w = sbg_quat.w();
+
+        mekf_quat_msg.x = mekf_quat.x();
+	    mekf_quat_msg.y = mekf_quat.y();
+	    mekf_quat_msg.z = mekf_quat.z();
+	    mekf_quat_msg.w = mekf_quat.w();
+
+        
+	    tf::Quaternion tf_quat_sbg, tf_quat_mekf;
+	    tf::quaternionMsgToTF(mekf_quat_msg, tf_quat_mekf);
+        tf::quaternionMsgToTF(sbg_quat_msg, tf_quat_sbg);
+
+
+        double roll_sbg, pitch_sbg, yaw_sbg, roll_mekf, pitch_mekf, yaw_mekf;
+        tf::Matrix3x3(tf_quat_sbg).getRPY(roll_sbg, pitch_sbg, yaw_sbg); 
+        tf::Matrix3x3(tf_quat_mekf).getRPY(roll_mekf, pitch_mekf, yaw_mekf); 
+
+
+
+        // 1. Check if yaw/pos threshold is satisfied (we use SBG INS as ground truth)
+        if((abs(sbg_pos.x() - mekf_pos.x()) <  x_pos_pub_thresh_) && (abs(sbg_pos.y() - mekf_pos.y()) <  y_pos_pub_thresh_) && (abs(yaw_sbg - yaw_mekf) < yaw_pub_thresh_)){
+
+            // 2. Check for consistently estimates over time
+
+            // increment counter
+            accepted_mekf_estimates_++;
+
+            // If more than X consecutive mekf estimates satisfies (2), we publish mekf instead of SBG INS 
+            // we also require that the filter use camera as source and not SBG
+            if((accepted_mekf_estimates_ >= consecutive_mekf_thresh_) && (!use_sbg_ins) && (!publish_MEKF_)){
+
+                publish_MEKF_ = true;  
+                ROS_INFO("********************************");
+                ROS_INFO("We publish MEKF now");
+                ROS_INFO("********************************");
+		        std::cout << "time stamp MEKF published: " << time_us << std::endl;
+
+            }
+                
+        }
+        else
+        {
+            // reset counter (since we require X consecutive estimates satisfying (2))
+            accepted_mekf_estimates_ = 0;
+        }
+    
 
     }
-    */
+    
+    
+    
 
 
     // Navigation management 
@@ -362,14 +261,14 @@ namespace mekf{
     // * 1) Euclidean distance from reference marker (i.e., origo in NED)
     // * 2) Camera pose accuracy
     // * 3) Consistently camera measurements over time
+ 
+    void MEKF::runNavigationManagement(uint64_t time_us){
 
-    
-    void MEKF::runNavigationManagement(){
 
         // get latest SBG INS sample
-        sbgPosSample sbg_pos_newest = sbgPosBuffer_.get_newest();
+        sbgNavSample sbg_nav_newest = sbgNavBuffer_.get_newest();
         sbgQuatSample sbg_quat_newest = sbgQuatBuffer_.get_newest();
-        vec3 sbg_pos = sbg_pos_newest.posNED;
+        vec3 sbg_pos = sbg_nav_newest.posNED;
         quat sbg_quat = sbg_quat_newest.quatNED;
 
         // get latest camera pose sample
@@ -377,14 +276,7 @@ namespace mekf{
         vec3 cam_pos = cam_pose_newest.posNED;
         quat cam_quat = cam_pose_newest.quatNED;
 
-        // get timestamps
-        /*
-        uint64_t time_sbg_pos = sbg_pos_newest.time_us;
-        uint64_t time_sbg_quat = sbg_quat_newest.time_us;
-        uint64_t time_cam_pose = cam_pose_newest.time_us;
-        */
-
-        // quaternion to euler angles
+        // quaternion to euler angles        
         geometry_msgs::Quaternion cam_quat_msg, sbg_quat_msg;
 
         sbg_quat_msg.x = sbg_quat.x();
@@ -406,23 +298,14 @@ namespace mekf{
         double roll_sbg, pitch_sbg, yaw_sbg, roll_cam, pitch_cam, yaw_cam;
         tf::Matrix3x3(tf_quat_sbg).getRPY(roll_sbg, pitch_sbg, yaw_sbg); 
         tf::Matrix3x3(tf_quat_cam).getRPY(roll_cam, pitch_cam, yaw_cam); 
-
-
-        std::cout << "x pos error: " << abs(sbg_pos.x() - cam_pos.x()) << std::endl;
-        std::cout << "y pos error: " << abs(sbg_pos.y() - cam_pos.y()) << std::endl;
-        std::cout << "yaw error: " << abs(yaw_sbg - yaw_cam)*(180/M_PI) << std::endl;
-
-
         
-
+  
         // 1. Are we inside the 2D euclidean distance region and do we use the SBG INS?
         if((sqrt(pow(sbg_pos.x(),2) + pow(sbg_pos.y(),2)) < euclidean_thresh_) && use_sbg_ins == true){
             
             // 2. Check if yaw/pos threshold is satisfied (we use SBG INS as ground truth)
             if( (abs(sbg_pos.x() - cam_pos.x()) <  x_pos_thresh_) && (abs(sbg_pos.y() - cam_pos.y()) <  y_pos_thresh_) && (abs(yaw_sbg - yaw_cam) < yaw_thresh_) ){
                
-                // TODO: use moving average instead?
-
                 // 3. Check for consistently measurements over time
 
                 // increment counter
@@ -430,8 +313,13 @@ namespace mekf{
 
                 // if more than X consecutive camera pose measurements satisfies (2), we use camera pose instead of SBG INS 
                 if(accepted_cam_measurements_ >= consecutive_cam_meas_thresh_){
-                    use_sbg_ins = false; // once set to false, we are finished and feed camera pose into the INS 
-                    ROS_INFO("We use Camera Pose measurements now");
+                   
+	   	            use_sbg_ins = false; // once set to false, we are finished and feed camera pose into the INS 
+		            //publish_MEKF_ = true;
+                    ROS_INFO("***********************************");
+		            ROS_INFO("We use Camera Pose measurements now");
+		            ROS_INFO("***********************************");
+		            std::cout << "time stamp cam pose in mekf: " << time_us << std::endl;
                 }
                 
             }
@@ -443,73 +331,73 @@ namespace mekf{
             
         }
 
-        /*
-        // 1. Are we inside the 2D euclidean distance region and do we not use the SBG INS?
-        if((sqrt(pow(sbg_pos.x(),2) + pow(sbg_pos.y(),2)) < euclidean_thresh_) && use_sbg_ins == false){
-            
-            // 2. Check if yaw/pos threshold is satisfied (we use SBG INS as ground truth)
-            if( (abs(sbg_pos.x() - cam_pos.x()) >  x_pos_thresh_) && (abs(sbg_pos.y() - cam_pos.y()) >  y_pos_thresh_) && (abs(yaw_sbg - yaw_cam) > yaw_thresh_) ){
-               
-                // increment counter
-                declined_cam_measurements_++;
-
-                                // if more than X consecutive camera pose measurements satisfies (2), we use camera pose instead of SBG INS 
-                if(declined_cam_measurements_ >= consecutive_cam_meas_thresh_ + 5){
-                    use_sbg_ins = true; // once set to false, we are finished and feed camera pose into the INS 
-                    ROS_INFO("We use Camera Pose measurements now");
-                }
-                else
-                {
-                    declined_cam_measurements_ = 0;
-                }
-                
-
-               
-            }
-            
-        }
-        */
-
-
 
     }
     
 
 
 
-    void MEKF::run_mekf(const vec3& ang_vel, const vec3& lin_acc, uint64_t time_us, scalar_t dt){
+    void MEKF::run_mekf(const vec3& ang_vel, const vec3& lin_acc, uint64_t time_us, double dt){
 
-        // TODO: use measured delta time dt or fixed sampling time? Should be consistent at least
+	    //std::cout << "TEST" << std::endl;
+
+        // TEST - check if cam/sbg quat is normalized
+        cameraPoseSample cam_pose_test = camPoseBuffer_.get_newest();
+        quat cam_quat_new = cam_pose_test.quatNED;
+
+        sbgQuatSample sbg_quat_test = sbgQuatBuffer_.get_newest();
+        quat sbg_quat_new = sbg_quat_test.quatNED;
+
+        double quat_norm_cam = sqrt ( pow(cam_quat_new.w(),2) + pow(cam_quat_new.x(),2) + pow(cam_quat_new.y(),2) + pow(cam_quat_new.z(),2) ) ;
+        double quat_norm_sbg = sqrt ( pow(sbg_quat_new.w(),2) + pow(sbg_quat_new.x(),2) + pow(sbg_quat_new.y(),2) + pow(sbg_quat_new.z(),2) ) ;
+
+
+        // check if quaternion from camera measurements is satisfied
+        if(!(quat_norm_cam >= 0.99 && quat_norm_cam <= 1.01)){
+		    //std::cout << "CAM QUAT UNIT TEST" << std::endl;    
+		    return;
+        }
+	
+        /*	
+        // check if quaternion from sbg measurements is satisfied
+        if(!(quat_norm_sbg >= 0.99 && quat_norm_sbg <= 1.01)){
+            	std::cout << "sbg quat test" << std::endl;
+		return;
+        }
+	    */
+	
 
         // copy imu data
-        //imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()) * dt; // current delta angle [rad]
-        //imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()) * dt; // current delta velocity [m/s]
-
         imu_sample_new_.delta_ang = vec3(ang_vel.x(), ang_vel.y(), ang_vel.z()); // current yaw rate [rad/s] // TODO: change name
         imu_sample_new_.delta_vel = vec3(lin_acc.x(), lin_acc.y(), lin_acc.z()); // current linear acceleration [m/s^2]
 
         imu_sample_new_.delta_ang_dt = dt;
         imu_sample_new_.delta_vel_dt = dt;
         imu_sample_new_.time_us = time_us;
-        time_last_imu_ = time_us; // update last time
-
+        time_last_imu_ = time_us; 
 
         // push to buffer
         imuBuffer_.push(imu_sample_new_); 
 
-  
         // get the oldest data from the buffer
         imu_sample_delayed_ = imuBuffer_.get_oldest(); // TODO: neccessary or can we use imu_sample_new directly?
         //imu_sample_delayed_ = imuBuffer_.get_newest();
 
 
 
-        // TODO: update test criteria
-        if(imu_sample_delayed_.delta_vel.x() == 0){
-            return;
+        // *** TEST validity of IMU measurements ***
+
+	    if(abs(imu_sample_delayed_.delta_ang.x()) < 0.0001){
+            //std::cout << "TEST 1" << std::endl;
+	        return;
         }
 
+	    if(abs(imu_sample_delayed_.delta_vel.x()) < 0.0001){
+		    //std::cout << "TEST 2" << std::endl;
+ 	        return;
+        }
 
+	
         // check if filter is initialized
         if (!filter_initialised_) {
             filter_initialised_ = initializeFilter();
@@ -543,20 +431,16 @@ namespace mekf{
         v01 << 0, 0, 1; 
 
         // Rotation matrix 
-        //q_ins.normalize(); // TODO: Do we need to normalize here?
         R = q_ins.toRotationMatrix(); 
 
         // Bias compensated IMU measurements
         vec3 f_ins = imu_sample_delayed_.delta_vel - acc_bias_ins; 
         vec3 w_ins = imu_sample_delayed_.delta_ang - gyro_bias_ins;
 
-        
 
         // * Discrete-time KF matrices *
 
         // TODO: move the static parts of the matrices to initialization?
-
-        // TODO: use fixed-size notation instead?
 
         A.block(0,0,3,3) = O3;
         A.block(0,3,3,3) = I3;
@@ -580,8 +464,7 @@ namespace mekf{
         A.block(9,3,3,3) = O3;
         A.block(9,6,3,3) = O3;
         A.block(9,9,3,3) = -Smtrx(w_ins);
-        A.block(9,12,3,3) = -I3; // TODO: update in all versions!
-        //A.block(9,12,3,3) = O3;
+        A.block(9,12,3,3) = -I3; 
 
         A.block(12,0,3,3) = O3;
         A.block(12,3,3,3) = O3;
@@ -592,16 +475,12 @@ namespace mekf{
    
 
         Ad =  I15 + h*A + 0.5*(h*A)*(h*A); 
-        //Ad =  I15 + h*A;   
+ 
       
-
-
         // linearization of heading measurement
         vec3 a = (2/q_ins.w()) * vec3(q_ins.x(),q_ins.y(),q_ins.z()); // 2 x Gibbs vector
 
-
         double u = 2 * ( a.x()*a.y() + 2*a.z() ) / ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) );
-
 
         double du = 1 / (1 + pow(u,2));
         vec3 c_psi = du * ( 1 / pow( ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) ), 2) ) * 
@@ -609,8 +488,6 @@ namespace mekf{
                        2*(( pow(a.y(),2) - pow(a.z(),2) + 4 )*a.x() + pow(a.x(),3) + 4*a.y()*a.z()),
                        4*( pow(a.z(),2) + a.x()*a.y()*a.z() + pow(a.x(),2) - pow(a.y(),2) + 4 ));
 
-
-        //std::cout << "c psi: " << c_psi << std::endl;
 
         // We asssume no velocity meausurements available 
 
@@ -658,56 +535,17 @@ namespace mekf{
         Ed.block(12,6,3,3) = O3;
         Ed.block(12,9,3,3) = I3;
 
-
-        // TODO: test and update all versions!!!!
         Ed = h * Ed;
 
-        // %%%%% Discretize process covariance matrix using Tustin / trapeziodal integration
-        
-        //Qd = 0.5*h*(Ad_old*Ed_old*Q_old*Ed_old.transpose()*Ad_old.transpose());
-        
-        //Ed_old.setZero(15,12);
-        //Ad_old.setIdentity(15,15); // TODO: zero?
-        //Q_old = Q; // TODO: zero?
-
-        //Qd = Ed.transpose()*Qd*Ed;
-
-        //Ed * Qd * Ed.transpose()
-
-        //Qd = Q;
-
-        //Ed * Qd * Ed.transpose();
-
-        /*
-        // update old (k-1) matrices before next iteration
-        Ed_old = Ed;
-        Ad_old = Ad;
-        Q_old = Q_old;
-        */
-        // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-        
-        
+
+  
         // %%% kalman filter algorithm %%%
 
 
         // check if fresh vision updates exists
         
-        // * alternative 1 *
-        
-        /*
-        if( (time_last_cam_pose_ > current_cam_pose_time) && (time_last_cam_pose_ > 0) ){
-            cam_pose_ready_ = true;
-            current_cam_pose_time = time_last_cam_pose_; 
-        }
-        else{
-            cam_pose_ready_ = false;
-        }
-        */
-    
-        // * alternative 2 *
-
         // * if available:
         // -> pop first cam pose with timestamp older than imu timestamp
         // -> remove old data in buffer (set tail to the item that comes after the one we removed)
@@ -715,126 +553,44 @@ namespace mekf{
         
         cam_pose_ready_ = camPoseBuffer_.pop_first_older_than(imu_sample_delayed_.time_us, &cam_pose_delayed_); 
 
-        //sbg_ready_ = sbgPosBuffer_.pop_first_older_than(imu_sample_delayed_.time_us, &sbg_pos_delayed_); 
-
-       
-        //std::cout << "sbg ready: " << sbg_ready_ << std::endl;
-
-        /*
-        if(sbg_ready_){
-            cam_test_meas_ ++;
-
-        }
-        std::cout << "cam test: " << cam_test_meas_ << std::endl;
-        */
-
-        // We only run navigation management when a camera pose is available
-        
-        
+	    // TODO: for pure camera testing (no sbg available), comment out runNavigationManagment() and set use_sbg_ins to false
+      
+        // We only run navigation management when a camera pose is available 
         if(cam_pose_ready_){
-
-            //cam_test_meas_ ++;
-
-            runNavigationManagement(); 
+            runNavigationManagement(time_us); 
         }
         
-        
-        //std::cout << "cam test: " << cam_test_meas_ << std::endl;
-        
-        
-
-       
-        // no camera pose measurements available (no aiding)
-        
-        
+        // no camera pose measurements available (no aiding)     
         if(!cam_pose_ready_){
 
             P_hat = P_prd;
 
         }
         
-        
-
-        //use_sbg_ins = true;        
-
-        /*
-        if(!sbg_ready_){
-
-            P_hat = P_prd;
-
-        }
-        */
-        
-        
-        
-
-        /*
-        sbg_meas_counter++;
-
-        std::cout << "counter: " << sbg_meas_counter << std::endl;
-
-        if(sbg_meas_counter > 0 && sbg_meas_counter < 1000){ // 18250 - 19500
-            std::cout << "DEAD RECKNONING" << std::endl;
-
-            // estimated bias
-            
-            //state_.accel_bias = vec3(-0.0545154, 0.22331, -0.0213926);
-            //state_.gyro_bias = vec3(2.54561e-5, 0.000397449, -0.000460659);
-            //acc_bias_ins = state_.accel_bias;
-            //gyro_bias_ins = state_.gyro_bias;
-            
-
-            use_sbg_ins = false;
-        }
-        else
-        {
-            use_sbg_ins = true;
-        }
-        */
-        
-        
-        
-        
-        
-        //if(sbg_ready_ == true || cam_pose_ready_ == true){
-        //if(sbg_ready_ == true || use_sbg_ins == true){
-
         // camera pose measurements available (INS aiding)
         else{
-        //if(sbg_ready_ == true && use_sbg_ins == true){
-
             K.setZero(15,7); // TODO: initialize before?
 
             // KF gain
             K = P_prd * Cd.transpose() * (Cd * P_prd * Cd.transpose() + Rd).inverse(); 
 
-            //std::cout << "P prd: " << P_prd << std::endl;
-            //std::cout << "outer: " << P_prd * Cd.transpose() << std::endl;
-            //std::cout << "inner: " << Cd * P_prd * Cd.transpose() + Rd << std::endl;
-            //std::cout << "Cd: " << Cd << std::endl;
-            //std::cout << "Rd: " << Rd << std::endl;
-
 
             IKC.setZero(15,15); // TODO: initialize before?
             IKC = I15 - K * Cd;
-
-            //std::cout << "use sbg ins: " << use_sbg_ins << std::endl;
 
     
             // if camera pose measurements is available but not accurate enough yet
             if(use_sbg_ins){
 
-                std::cout << "We use SBG POSE" << std::endl;
-
                 // extract latest SBG ins measurements
-                sbgPosSample sbg_pos_newest = sbgPosBuffer_.get_newest();
+                sbgNavSample sbg_nav_newest = sbgNavBuffer_.get_newest();
                 sbgQuatSample sbg_quat_newest = sbgQuatBuffer_.get_newest();
-                y_pos = sbg_pos_newest.posNED;
+                y_pos = sbg_nav_newest.posNED;
                 y_quat = sbg_quat_newest.quatNED;
 
-                // position are extracted directly while orientation are converted from quat to euler, TODO: use quat2euler instead?
-                geometry_msgs::Quaternion quat_msg;
 
+                // quat to euler         
+                geometry_msgs::Quaternion quat_msg;
                 quat_msg.x = y_quat.x();
                 quat_msg.y = y_quat.y();
                 quat_msg.z = y_quat.z();
@@ -846,24 +602,21 @@ namespace mekf{
 
                 double roll, pitch, yaw;
                 tf::Matrix3x3(quatTf).getRPY(roll, pitch, yaw); 
-                
+                      
                 y_psi = yaw;
             }
 
             // if camera pose measurements is accurate enough
-            //else if(!sbg_ready_){ // TODO: fix this logic when using cam pose again
             else{
 
-                std::cout << "We use CAM POSE" << std::endl;
-
+                
                 // extract latest camera pose measurements
                 cameraPoseSample cam_pose_newest = camPoseBuffer_.get_newest(); 
                 y_pos = cam_pose_newest.posNED;
                 y_quat = cam_pose_newest.quatNED; 
 
-                // position are extracted directly while orientation are converted from quat to euler, TODO: use quat2euler instead?
+                // quat to euler 
                 geometry_msgs::Quaternion quat_msg;
-
                 quat_msg.x = y_quat.x();
                 quat_msg.y = y_quat.y();
                 quat_msg.z = y_quat.z();
@@ -875,27 +628,11 @@ namespace mekf{
 
                 double roll, pitch, yaw;
                 tf::Matrix3x3(quatTf).getRPY(roll, pitch, yaw); 
-                
+                 
                 y_psi = yaw;
             }
 
                         
-            std::cout << "y_pos: " << std::endl;
-            std::cout << y_pos << std::endl;
-
-
-            // *** log apriltag data ***
-
-            int trace_id = 0;
-
-            log_apriltagPose << std::fixed;
-            log_apriltagPose << std::setprecision(16);
-            log_apriltagPose << ++trace_id << " " << time_us*10e-7 << " " << y_pos.x() << " " << y_pos.y() << " " << y_pos.z() << " " << y_psi <<  std::endl;
-
-            if(trace_id > 7500){
-                log_apriltagPose.close();
-            }
-
             // ************************************
 
 
@@ -906,9 +643,6 @@ namespace mekf{
             vec3 eps_pos = y_pos - p_ins;
             vec3 eps_g = v1 - R.transpose() * v01; 
 
-
-            std::cout << "y psi: " << y_psi*(180/M_PI) << std::endl;
-
             // smallest signed angle
             double eps_psi = ssa(y_psi - atan(u)); // (in radians)
 
@@ -918,14 +652,10 @@ namespace mekf{
             eps.block(3,0,3,1) = eps_g;
             eps(6,0) = eps_psi;
 
-            //std::cout << "eps: " << eps << std::endl;
-
-
             // corrector
             delta_x_hat = K * eps;
             P_hat = IKC * P_prd * IKC.transpose() + K * Rd * K.transpose();
 
-            //std::cout << "K: " << K << std::endl;
 
             // error quaternion (2 x Gibbs vector)
             vec3 delta_a = delta_x_hat.block(9,0,3,1);
@@ -936,20 +666,7 @@ namespace mekf{
             p_ins = p_ins + delta_x_hat.block(0,0,3,1);	                 // position
 	        v_ins = v_ins + delta_x_hat.block(3,0,3,1);			         // velocity
 	        acc_bias_ins = acc_bias_ins + delta_x_hat.block(6,0,3,1);    // acc bias
-	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(12,0,3,1); // gyro bias
-
-
-            //std::cout << "delta a: " << delta_a << std::endl;            
-
-            /*
-            std::cout << " delta acc bias: " << delta_x_hat.block(6,0,3,1) << std::endl;
-            std::cout << " delta gyro bias: " << delta_x_hat.block(12,0,3,1) << std::endl;
-            */
-
-            //std::cout << std::fixed;
-            //std::cout << std::setprecision(16);
-            //std::cout << "gyro bias:" << gyro_bias_ins << std::endl;
-            
+	        gyro_bias_ins = gyro_bias_ins + delta_x_hat.block(12,0,3,1); // gyro bias         
             q_ins = quatprod(q_ins, delta_q_hat);                        // schur product   
             q_ins.normalize();                                           // normalization
 
@@ -959,22 +676,11 @@ namespace mekf{
         // predictor
         P_prd = Ad * P_hat * Ad.transpose() + Ed * Qd * Ed.transpose();
 
-        //std::cout << "P_prd: " << P_prd << std::endl;
-
 
         // INS propagation: x_ins[k+1]
         vec3 a_ins = R * f_ins + g_n;                                                          // linear acceleration
-
         p_ins = p_ins + h * v_ins + pow(h,2)/2 * a_ins;                                        // exact discretization
-
-        //p_ins = p_ins + h * v_ins;
-
-        v_ins = v_ins + h * a_ins;                                                             // exact discretization 
-
-        //std::cout << "T quat w ins 1: "  << (h*Tquat_vec3(w_ins)).exp() << std::endl;   
-
-        //std::cout << "T quat w ins 2: "  << (Tquat_vec3(w_ins)*h).exp() << std::endl;   
-        
+        v_ins = v_ins + h * a_ins;                                                             // exact discretization   
         vec4 q_ins_vec = (h*Tquat_vec3(w_ins)).exp() * vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()); // exact discretization
         //vec4 q_ins_vec = vec4(q_ins.w(),q_ins.x(),q_ins.y(),q_ins.z()) + h*Tquat_quat(q_ins) * w_ins; // Euler's method (alternative)
 
@@ -988,17 +694,9 @@ namespace mekf{
         state_.quat_nominal = q_ins;
         state_.gyro_bias = gyro_bias_ins;
 
-        std::cout << "acc bias: " << acc_bias_ins << std::endl;
-        std::cout << "gyro bias: " << gyro_bias_ins << std::endl;
 
-        
-        std::cout << "estimated pos: " << std::endl;
-        std::cout << state_.pos << std::endl;
-
-
-        // convert quat to euler, TODO: use quat2euler instead?
+        // quaternion to euler angles       
         geometry_msgs::Quaternion quat_msg2;
-
         quat_msg2.x = q_ins.x();
 	    quat_msg2.y = q_ins.y();
 	    quat_msg2.z = q_ins.z();
@@ -1010,14 +708,18 @@ namespace mekf{
 
         double roll_est, pitch_est, yaw_est;
         tf::Matrix3x3(quat3).getRPY(roll_est, pitch_est, yaw_est); 
-
-        std::cout << "estimated yaw: " << yaw_est*(180/M_PI) << std::endl;
-
-
+    
         // reset vision flag after each INS update 
-        cam_pose_ready_ = false;
+        cam_pose_ready_ = false; // TODO: same procedure for SBG pose ready if used 
+
+
+        // assign publish_MEKF_ to true if mekf estimates are accurate enough (so we can publish mekf instead of sbg)
+        publish_MEKF(time_us); 
+
       
     }
+
+
 
 
     // gravity model (MSS toolbox)
@@ -1031,8 +733,6 @@ namespace mekf{
     }
 
     
-    // TODO: if we fuse measurements in imu frame, transform measurements to center of vehicle here
-
 
 
     quat MEKF::getQuat(){

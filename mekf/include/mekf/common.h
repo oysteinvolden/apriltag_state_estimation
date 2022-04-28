@@ -41,10 +41,10 @@ namespace mekf{
 
     struct imuSample {
         vec3    delta_ang;    // delta angle in body frame (integrated gyro measurements) [rad]
-        vec3    delta_vel;    // delta velocity in body frame (integrated accelerometer measurements) [m/sec)]
+        vec3    delta_vel;    // delta velocity in body frame (integrated accelerometer measurements) [m/s]
         double  delta_ang_dt; // delta angle integration period [sec]
         double  delta_vel_dt; // delta velocity integration period [sec]
-        uint64_t  time_us;    // timestamp of the measurement [uSec]
+        uint64_t  time_us;    // timestamp of the measurement [micro sec]
     };
 
     struct cameraPoseSample {
@@ -52,27 +52,19 @@ namespace mekf{
         quat quatNED;      // measured quaternion orientation defining rotation from NED to body frame
         double posErr;     // 1-Sigma spherical position accuracy [m]
         double angErr;     // 1-Sigma angular error [rad]
-        uint64_t time_us;  // timestamp of the measurement [micro seconds]
+        uint64_t time_us;  // timestamp of the measurement [micro sec]
     };
 
-    /*
-    struct sbgPoseSample {
-        vec3 posNED;       // measured NED body position relative to the local origin [m]
-        quat quatNED;      // measured quaternion orientation defining rotation from NED to body frame
-        double posErr;     // 1-Sigma spherical position accuracy [m]
-        double angErr;     // 1-Sigma angular error [rad]
-        uint64_t time_us;  // timestamp of the measurement [micro seconds]
-    };
-    */
 
-    struct sbgPosSample {
+    struct sbgNavSample {
         vec3 posNED;       // measured NED body position relative to the local origin [m]
-        uint64_t time_us;  // timestamp of the measurement [micro seconds]
+        vec3 vel;          // measured velocity in body frame [m/s]
+	uint64_t time_us;      // timestamp of the measurement [micro sec]
     };
 
     struct sbgQuatSample {
         quat quatNED;      // measured quaternion orientation defining rotation from NED to body frame
-        uint64_t time_us;  // timestamp of the measurement [micro seconds]
+        uint64_t time_us;  // timestamp of the measurement [micro sec]
     };
 
 
@@ -181,14 +173,14 @@ namespace mekf{
 
         T(1,0) = eta;
         T(1,1) = -eps.z();
-        T(1,2) = eps.y(); // TODO: correct this in all versions!
+        T(1,2) = eps.y(); 
 
         T(2,0) = eps.z();
         T(2,1) = eta;
         T(2,2) = -eps.x();
 
         T(3,0) = -eps.y();
-        T(3,1) = eps.x(); // TODO: correct this in all versions!
+        T(3,1) = eps.x(); 
         T(3,2) = eta;
 
         return 0.5*T;
@@ -216,30 +208,7 @@ namespace mekf{
     }
 
   
-
-    // Matrix exponential
-    /*
-    inline mat4 expm(mat4 X){
-
-        // extract eigenvalues/eigenvectors
-        
-        Eigen::EigenSolver<Eigen::Matrix4d> es(X);
-        Eigen::MatrixXcd D = es.eigenvalues();
-        Eigen::MatrixXcd V = es.eigenvectors();
-
-        //return V*((D.diagonal().exp()).diagonal())/(V);
-
-        D = D.diagonal().exp().diagonal();
-
-        return V * (D) / V ;
-        
- 
-        //return X.exp(); // return matrix exponential
-    }
-    */
     
-
-      
 
     // *** tf functions ***
 
