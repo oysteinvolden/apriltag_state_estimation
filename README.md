@@ -1,4 +1,4 @@
-# apriltag_state_estimation
+# AprilTag state estimation
 Fusion of camera-tag pose and IMU using the multiplicative extended kalman filter (MEKF).  
 
 
