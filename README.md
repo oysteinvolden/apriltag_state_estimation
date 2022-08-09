@@ -3,7 +3,7 @@ Fusion of camera-tag pose and IMU using the multiplicative extended kalman filte
 
 
 ## Overview
-This repo contains source code for visual-inertial state estimation. More concrete, an application-specific error-state Kalman filter (MEKF) is implemented with ROS interface. It fuses camera-tag pose (e.g., from AprilTags) with IMU measurements and outputs the full state of the vehicle, including position, velocity, attitude, and biases. 
+This repo contains source code for visual-inertial state estimation. More concrete, an application-specific error-state Kalman filter (MEKF) is implemented with ROS interface. It fuses camera-tag pose (e.g., from AprilTags) with IMU measurements and outputs the full state of the vehicle, including position, velocity, and attitude. 
 
 ## Future work
 
