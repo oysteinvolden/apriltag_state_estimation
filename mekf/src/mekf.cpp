@@ -480,7 +480,11 @@ namespace mekf{
         // linearization of heading measurement
         vec3 a = (2/q_ins.w()) * vec3(q_ins.x(),q_ins.y(),q_ins.z()); // 2 x Gibbs vector
 
-        double u = 2 * ( a.x()*a.y() + 2*a.z() ) / ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) );
+        double u_x = 2 * ( a.x()*a.y() + 2*a.z() );
+
+        double u_y = ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) );
+
+        double u = u_x/u_y;
 
         double du = 1 / (1 + pow(u,2));
         vec3 c_psi = du * ( 1 / pow( ( 4 + pow(a.x(),2) - pow(a.y(),2) - pow(a.z(),2) ), 2) ) * 
@@ -644,7 +648,7 @@ namespace mekf{
             vec3 eps_g = v1 - R.transpose() * v01; 
 
             // smallest signed angle
-            double eps_psi = ssa(y_psi - atan(u)); // (in radians)
+            double eps_psi = ssa(y_psi - atan2(u_y/u_x)); // (in radians)
 
 
             // we assume no velocity measurements here
