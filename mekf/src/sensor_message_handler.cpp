@@ -298,8 +298,8 @@ namespace mekf{
             // transform camera pose to NED
             geometry_msgs::PoseWithCovarianceStamped camPoseNED = cameraTransform(cameraPoseMsg);
    
-            // get measurements
-            vec3 cam_pos = vec3(camPoseNED.pose.pose.position.x, camPoseNED.pose.pose.position.y, camPoseNED.pose.pose.position.z);
+            // get measurements - swap pos (x/y) - so compatible with GNSS
+            vec3 cam_pos = vec3(camPoseNED.pose.pose.position.y,camPoseNED.pose.pose.position.x, camPoseNED.pose.pose.position.z);
             quat cam_quat = quat(camPoseNED.pose.pose.orientation.w, camPoseNED.pose.pose.orientation.x, camPoseNED.pose.pose.orientation.y, camPoseNED.pose.pose.orientation.z);
 
             cam_quat.normalize(); // TODO: neccessary?
@@ -323,11 +323,11 @@ namespace mekf{
 
 
             // convert from WGS84 to NED
-            vec3 sbgPosNED = llh2flat(navSbgMsg); // TODO: do we need to specify precision?
-            vec3 sbg_pos = vec3(sbgPosNED.y(), sbgPosNED.x(), sbgPosNED.z()); // TODO: check order of x and y
+            vec3 sbgPosNED = llh2flat(navSbgMsg); 
+            vec3 sbg_pos = vec3(sbgPosNED.x(), sbgPosNED.y(), sbgPosNED.z()); 
 	    
 	        // get directly
-	        vec3 sbg_vel = vec3(navSbgMsg->velocity.x,navSbgMsg->velocity.y, navSbgMsg->velocity.z); // TODO: check order of x and y
+	        vec3 sbg_vel = vec3(navSbgMsg->velocity.x,navSbgMsg->velocity.y, navSbgMsg->velocity.z); 
            
             // update sample
             mekf_.updateSbgNav(sbg_pos, sbg_vel, static_cast<uint64_t>(navSbgMsg->header.stamp.toSec()*1e6f));
